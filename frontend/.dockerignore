@@ -1,0 +1,63 @@
+# ==========================================
+# DEPENDENCIES
+# `npm ci` jalan di dalam image. Kalau node_modules host ikut
+# tersalin, hasil `npm ci` akan tertimpa dan build memakai
+# binary Windows di container Linux.
+# ==========================================
+node_modules
+npm-debug.log*
+yarn-error.log*
+
+# ==========================================
+# BUILD OUTPUT
+# dist dibangun ulang di stage builder.
+# ==========================================
+dist
+dist-ssr
+
+# ==========================================
+# SECRETS & KONFIGURASI LOKAL
+# VITE_* untuk container di-set lewat docker-compose.
+# ==========================================
+.env
+.env.*
+*.local
+
+# ==========================================
+# GIT & CI
+# ==========================================
+.git
+.gitignore
+.github
+
+# ==========================================
+# DOKUMENTASI
+# ==========================================
+docs
+*.md
+
+# ==========================================
+# EDITOR & OS
+# ==========================================
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+
+# ==========================================
+# TESTING
+# ==========================================
+tests
+test-results
+playwright-report
+blob-report
+playwright/.cache
+coverage
+
+# ==========================================
+# FILE DOCKER SENDIRI
+# ==========================================
+Dockerfile
+.dockerignore
+docker-compose*.yml

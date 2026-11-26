@@ -1,0 +1,26 @@
+# ==========================================
+# NORMALISASI AKHIR BARIS
+# Di Windows core.autocrlf=true mengubah LF menjadi CRLF saat checkout.
+# File yang dieksekusi di dalam container Linux harus tetap LF: kalau tidak,
+# shebang terbaca sebagai "/bin/bash" + karakter CR, dan container gagal start
+# dengan "exec ./start.sh failed: No such file or directory".
+# ==========================================
+
+* text=auto
+
+*.sh           text eol=lf
+*.sql          text eol=lf
+*.conf         text eol=lf
+Dockerfile     text eol=lf
+.dockerignore  text eol=lf
+
+# ==========================================
+# BINER — jangan disentuh normalisasi
+# ==========================================
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.docx  binary

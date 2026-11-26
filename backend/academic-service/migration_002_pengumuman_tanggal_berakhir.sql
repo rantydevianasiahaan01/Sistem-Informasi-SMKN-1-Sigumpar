@@ -1,0 +1,1 @@
+ALTER TABLE pengumuman ADD COLUMN IF NOT EXISTS tanggal_berakhir TIMESTAMP;

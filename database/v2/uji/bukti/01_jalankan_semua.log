@@ -1,0 +1,24 @@
+# Dijalankan: 2026-11-25 15:52 WIB, PostgreSQL 16, database kosong
+# Perintah: ./jalankan_semua.sh --demo
+>> 000-umum/migration_000_ekstensi_enum.sql
+>> auth-service/migration_001_skema_v2.sql
+>> academic-service/migration_001_skema_v2.sql
+>> learning-service/migration_001_skema_v2.sql
+>> student-service/migration_001_skema_v2.sql
+>> vocational-service/migration_001_skema_v2.sql
+>> asset-service/migration_001_skema_v2.sql
+>> auth-service/migration_002_relasi_v2.sql
+>> academic-service/migration_002_relasi_v2.sql
+>> learning-service/migration_002_relasi_v2.sql
+>> student-service/migration_002_relasi_v2.sql
+>> vocational-service/migration_002_relasi_v2.sql
+>> asset-service/migration_002_relasi_v2.sql
+>> auth-service/migration_003_aturan_v2.sql
+>> academic-service/migration_003_aturan_v2.sql
+>> learning-service/migration_003_aturan_v2.sql
+>> student-service/migration_003_aturan_v2.sql
+>> vocational-service/migration_003_aturan_v2.sql
+>> asset-service/migration_003_aturan_v2.sql
+>> seed/seed_001_data_awal.sql
+>> seed/seed_002_data_demo.sql
+Selesai.

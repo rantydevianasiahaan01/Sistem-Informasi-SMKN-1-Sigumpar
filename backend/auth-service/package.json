@@ -1,0 +1,39 @@
+{
+  "name": "auth-service",
+  "version": "1.0.0",
+  "description": "Autentikasi dan pengelolaan akun SMK N1 Sigumpar",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "mime-types": "^2.1.35",
+    "morgan": "^1.12.0",
+    "multer": "^2.3.0",
+    "pg": "^8.23.0",
+    "uuid": "^13.0.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  },
+  "overrides": {
+    "body-parser": "^2.3.0",
+    "brace-expansion": "5.0.9",
+    "form-data": "^4.0.6",
+    "path-to-regexp": "8.4.2",
+    "picomatch": "2.3.2",
+    "qs": "^6.16.0",
+    "uuid": "$uuid"
+  }
+}

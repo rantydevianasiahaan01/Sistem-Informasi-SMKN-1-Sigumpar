@@ -1,0 +1,403 @@
+import React, { useState, useEffect, useRef } from "react";
+import usePagination from "../../../hooks/usePagination";
+import TablePagination from "../../../components/common/TablePagination";
+import { academicApi } from "../../../api/academicApi";
+import axiosInstance from "../../../api/axiosInstance";
+import Button from "../../../components/ui/Button";
+import MapelDialog from "./dialog/MapelDialog";
+import toast from "react-hot-toast";
+import PageActionsMenu from "../../../components/common/PageActionsMenu";
+import SearchBar from "../../../components/common/SearchBar";
+import { exportRowsToExcel } from "../../../utils/exportExcel";
+import {
+  downloadExcelTemplate,
+  findByNormalizedName,
+  pickField,
+  readExcelFile,
+} from "../../../utils/importExcel";
+import { TableLoadingRow } from "../../../components/common/PageLoading";
+
+
+const MapelPage = () => {
+  const [mapelData, setMapelData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedMapel, setSelectedMapel] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // State khusus Delete Sheet
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [mapelToDelete, setMapelToDelete] = useState(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+
+  // State untuk Dropdown Menu
+  const [openMenuId, setOpenMenuId] = useState(null);
+  const menuRef = useRef(null);
+
+  const fetchMapel = async () => {
+    setLoading(true);
+    try {
+      const resMapel = await academicApi.getAllMapel();
+      let users = [];
+      try {
+        const resUsers = await axiosInstance.get("/api/auth");
+        users = Array.isArray(resUsers.data) ? resUsers.data : (resUsers.data?.data || []);
+      } catch { /* users gagal, data utama tetap tampil */ }
+      const rawMapel = Array.isArray(resMapel.data) ? resMapel.data : resMapel.data.data || [];
+
+      // Mapping UUID guru dengan data dari Auth Service
+      const mapelWithGuru = rawMapel.map((m) => {
+        const guru = users.find((u) => u.id === m.guru_mapel_id);
+        return {
+          ...m,
+          nama_guru: guru ? (guru.nama_lengkap || guru.username) : "-",
+        };
+      });
+
+      setMapelData(mapelWithGuru);
+    } catch (err) {
+      console.error("Gagal mengambil data mapel:", err);
+      toast.error("Gagal memuat data mata pelajaran");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMapel();
+  }, []);
+
+  // Logika menutup menu saat klik di luar
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setOpenMenuId(null);
+      }
+    };
+    if (openMenuId !== null) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [openMenuId]);
+
+  const handleEdit = (mapel) => {
+    setSelectedMapel(mapel);
+    setIsDialogOpen(true);
+    setOpenMenuId(null);
+  };
+
+  const handleDeleteClick = (mapel) => {
+    setMapelToDelete(mapel);
+    setDeleteConfirmation("");
+    setIsDeleteDialogOpen(true);
+    setOpenMenuId(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!mapelToDelete) return;
+    if (deleteConfirmation !== mapelToDelete.nama_mapel) {
+      toast.error("Nama mapel tidak sesuai!");
+      return;
+    }
+
+    const deletePromise = academicApi.deleteMapel(mapelToDelete.id);
+    toast.promise(deletePromise, {
+      loading: "Menghapus mata pelajaran...",
+      success: `Mapel ${mapelToDelete.nama_mapel} berhasil dihapus!`,
+      error: "Gagal menghapus mata pelajaran.",
+    }).then(() => {
+      fetchMapel();
+      setIsDeleteDialogOpen(false);
+      setMapelToDelete(null);
+    });
+  };
+
+  const handleExportExcel = () => {
+    exportRowsToExcel(
+      filtered.map((m, index) => ({
+        No: index + 1,
+        "Nama Mapel": m.nama_mapel || "-",
+        Kelas: m.nama_kelas || "-",
+        "Guru Mapel": m.nama_guru || "-",
+      })),
+      { sheetName: "Mata Pelajaran", fileName: "mata-pelajaran" },
+    );
+  };
+
+  const handleDownloadTemplateMapel = () => {
+    downloadExcelTemplate({
+      headers: ["Nama Mapel", "Kelas", "Guru Mapel"],
+      sampleRows: [["Matematika", "X TKJ 1", "Contoh Nama Guru"]],
+      sheetName: "Template Mapel",
+      fileName: "template-import-mapel",
+    });
+  };
+
+  const handleImportExcel = async (file) => {
+    setImporting(true);
+    try {
+      const rows = await readExcelFile(file);
+      if (!rows.length) {
+        toast.error("File Excel kosong atau tidak berisi data");
+        return;
+      }
+
+      const [resKelas, resGuru] = await Promise.all([
+        academicApi.getAllKelas(),
+        academicApi.searchGuruMapel(""),
+      ]);
+      const kelasList = Array.isArray(resKelas.data)
+        ? resKelas.data
+        : resKelas.data?.data || [];
+      const guruList = resGuru.data?.data || [];
+
+      let berhasil = 0;
+      let gagal = 0;
+      const pesanGagal = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const nama_mapel = pickField(row, [
+          "Nama Mapel",
+          "nama mapel",
+          "nama_mapel",
+          "mata pelajaran",
+          "mapel",
+        ]);
+        const namaKelas = pickField(row, ["Kelas", "nama_kelas", "nama kelas"]);
+        const namaGuru = pickField(row, [
+          "Guru Mapel",
+          "guru mapel",
+          "guru",
+          "nama guru",
+        ]);
+
+        if (!nama_mapel) {
+          gagal += 1;
+          pesanGagal.push(`Baris ${i + 2}: Nama Mapel wajib diisi`);
+          continue;
+        }
+
+        let kelas_id = null;
+        if (namaKelas) {
+          const kelas = findByNormalizedName(kelasList, namaKelas, [
+            (k) => k.nama_kelas,
+          ]);
+          if (!kelas) {
+            gagal += 1;
+            pesanGagal.push(
+              `Baris ${i + 2}: Kelas "${namaKelas}" tidak ditemukan`,
+            );
+            continue;
+          }
+          kelas_id = kelas.id;
+        }
+
+        let guru_mapel_id = null;
+        let guru_mapel_nama = null;
+        if (namaGuru) {
+          const guru = findByNormalizedName(guruList, namaGuru, [
+            (g) => g.nama_lengkap,
+            (g) => g.username,
+          ]);
+          if (!guru) {
+            gagal += 1;
+            pesanGagal.push(
+              `Baris ${i + 2}: Guru Mapel "${namaGuru}" tidak ditemukan (harus punya hak akses guru-mapel)`,
+            );
+            continue;
+          }
+          guru_mapel_id = guru.id;
+          guru_mapel_nama = guru.nama_lengkap || guru.username;
+        }
+
+        try {
+          await academicApi.createMapel({
+            nama_mapel,
+            kelas_id,
+            guru_mapel_id,
+            guru_mapel_nama,
+          });
+          berhasil += 1;
+        } catch (err) {
+          gagal += 1;
+          pesanGagal.push(
+            `Baris ${i + 2}: ${
+              err.response?.data?.error ||
+              err.response?.data?.message ||
+              "gagal disimpan"
+            }`,
+          );
+        }
+      }
+
+      if (berhasil > 0) {
+        toast.success(
+          `Import selesai: ${berhasil} mapel ditambahkan${
+            gagal ? `, ${gagal} gagal` : ""
+          }`,
+        );
+        fetchMapel();
+      } else {
+        toast.error(
+          gagal
+            ? `Tidak ada data yang berhasil diimpor (${gagal} gagal)`
+            : "Tidak ada data yang diimpor",
+        );
+      }
+
+      if (pesanGagal.length > 0) {
+        console.warn("Detail gagal import mapel:", pesanGagal.slice(0, 20));
+        toast.error(pesanGagal.slice(0, 3).join(" · "), { duration: 6000 });
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Gagal membaca file Excel");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const q = searchQuery.trim().toLowerCase();
+  const filtered = mapelData.filter((m) => {
+    if (!q) return true;
+    return (
+      m.nama_mapel?.toLowerCase().includes(q) ||
+      m.nama_kelas?.toLowerCase().includes(q) ||
+      m.nama_guru?.toLowerCase().includes(q) ||
+      m.guru_mapel_nama?.toLowerCase().includes(q)
+    );
+  });
+
+  const pg = usePagination(filtered);
+
+  return (
+    <div className="w-full">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 px-4 md:px-6 py-5 mb-6 flex flex-wrap justify-between items-center gap-3">
+        <h1 className="text-2xl font-bold text-gray-800">Mata Pelajaran</h1>
+        <PageActionsMenu
+          tambahLabel="Tambah Data"
+          onTambah={() => {
+            setSelectedMapel(null);
+            setIsDialogOpen(true);
+          }}
+          onExport={handleExportExcel}
+          exportDisabled={filtered.length === 0}
+          importProps={{
+            onFile: handleImportExcel,
+            loading: importing,
+            onDownloadTemplate: handleDownloadTemplateMapel,
+            title: "Import Excel Mata Pelajaran",
+            hint: "Unduh template, isi data mapel sesuai kolom, lalu unggah file Excel.",
+          }}
+        />
+      </div>
+
+      <SearchBar
+        value={searchQuery}
+        onChange={setSearchQuery}
+        placeholder="Cari mata pelajaran, kelas, atau guru..."
+      />
+
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-visible">
+        <table className="w-full text-left border-collapse">
+          <thead className="bg-gray-50 text-gray-600 uppercase text-xs font-semibold">
+            <tr>
+              <th className="px-4 md:px-6 py-4">Nama Mapel</th>
+              <th className="px-4 md:px-6 py-4">Kelas</th>
+              <th className="px-4 md:px-6 py-4">Guru Mapel</th>
+              <th className="px-4 md:px-6 py-4 text-center w-20">Tindakan</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200">
+            {loading ? (
+              <TableLoadingRow colSpan={4} label="Memuat mata pelajaran..." />
+            ) : filtered.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-4 md:px-6 py-10 text-center text-gray-400">
+                  {searchQuery
+                    ? "Tidak ada mata pelajaran yang cocok"
+                    : <>Belum ada data mata pelajaran. Klik <strong>+ Tambah Mapel</strong> untuk menambahkan.</>}
+                </td>
+              </tr>
+            ) : pg.items.map((m) => (
+              <tr key={m.id} className="hover:bg-gray-50">
+                <td className="px-4 md:px-6 py-4 font-medium">{m.nama_mapel}</td>
+                <td className="px-4 md:px-6 py-4">{m.nama_kelas || "-"}</td>
+                <td className="px-4 md:px-6 py-4">{m.nama_guru}</td>
+                <td className="px-4 md:px-6 py-4 text-center relative" ref={openMenuId === m.id ? menuRef : null}>
+                  <button
+                    onClick={() => setOpenMenuId(openMenuId === m.id ? null : m.id)}
+                    className="text-gray-500 hover:text-gray-800 p-2 rounded-full hover:bg-gray-100 transition-colors"
+                  >
+                    <span className="font-bold text-lg">⋮</span>
+                  </button>
+
+                  {openMenuId === m.id && (
+                    <div className="absolute right-6 mt-1 w-32 bg-white border border-gray-200 rounded-lg shadow-xl z-10 overflow-hidden">
+                      <div className="py-1">
+                        <button onClick={() => handleEdit(m)} className="w-full text-left px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 font-medium flex items-center gap-2">
+                          Edit
+                        </button>
+                        <button onClick={() => handleDeleteClick(m)} className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 font-medium flex items-center gap-2 border-t border-gray-100">
+                          Hapus
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <TablePagination pagination={pg} label="mapel" />
+      </div>
+
+      <MapelDialog
+        isOpen={isDialogOpen}
+        onClose={() => setIsDialogOpen(false)}
+        onSuccess={fetchMapel}
+        initialData={selectedMapel}
+      />
+
+      {/* Panel Hapus Samping */}
+      {isDeleteDialogOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col animate-slide-right">
+            <div className="px-4 md:px-6 py-4 border-b">
+              <h2 className="text-xl font-bold text-red-600">Hapus Mata Pelajaran</h2>
+            </div>
+            <div className="flex-1 px-6 py-6 space-y-6">
+              <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                <p>Menghapus mapel <strong>{mapelToDelete?.nama_mapel}</strong> akan menghapus data yang terkait dengan mapel ini secara permanen.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold mb-2">Ketik nama mapel untuk konfirmasi:</label>
+                <input
+                  type="text"
+                  className="w-full px-3 py-2 border rounded-lg text-center font-mono"
+                  value={deleteConfirmation}
+                  onChange={(e) => setDeleteConfirmation(e.target.value)}
+                  placeholder={mapelToDelete?.nama_mapel}
+                />
+              </div>
+            </div>
+            <div className="px-4 md:px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+              <Button variant="secondary" onClick={() => setIsDeleteDialogOpen(false)}>Batal</Button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleteConfirmation !== mapelToDelete?.nama_mapel}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg disabled:bg-red-300"
+              >
+                Tetap Hapus
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default MapelPage;

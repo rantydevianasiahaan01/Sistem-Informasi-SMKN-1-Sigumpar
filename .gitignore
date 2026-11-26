@@ -1,0 +1,112 @@
+# ==========================================
+# DEPENDENCIES (Node.js)
+# ==========================================
+node_modules/
+dist
+.git
+.pnp
+.pnp.js
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ==========================================
+# BUILD OUTPUTS (TypeScript / React)
+# ==========================================
+dist/
+build/
+out/
+.next/
+.nuxt/
+
+# ==========================================
+# ENVIRONMENT VARIABLES (Secrets)
+# ==========================================
+# JANGAN PERNAH push file .env ke GitHub!
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# Semua cadangan .env (.env.old, .env.bak-*, dst.) juga berisi password.
+.env.*
+!.env.example
+# (Boleh membiarkan .env.template atau .env.example agar anggota tim lain tahu formatnya)
+
+# ==========================================
+# LOGS & DATABASES
+# ==========================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Jika sewaktu-waktu Anda me-mount data Docker ke folder lokal
+postgres-data/
+*_db_data/
+*.sqlite
+*.db
+
+# ==========================================
+# TESTING & COVERAGE
+# ==========================================
+coverage/
+.nyc_output/
+
+# ==========================================
+# OS & EDITOR FILES
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# VS Code, IntelliJ, dsb.
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+
+# ==========================================
+# FILE SEMENTARA MS OFFICE
+# Word/Excel membuat file kunci "~$namafile.docx" saat dokumen dibuka.
+# ==========================================
+~$*
+
+# ==========================================
+# DATA RUNTIME
+# Bind mount hasil upload user (./data/uploads/<service>).
+# Foldernya dibuat otomatis oleh Docker saat container start.
+# ==========================================
+/data/
+.data/
+
+# Cadangan sebelum migrasi — berisi data asli, jangan ikut di-commit
+backup/
+
+.env.production*
+
+# ==========================================
+# FILE UNGGAHAN PENGGUNA
+# Isi ./uploads (surat, laporan, foto) adalah data sekolah: jangan di-commit.
+# Folder kosongnya tetap disimpan karena di-mount docker-compose.yml.
+# ==========================================
+uploads/*
+!uploads/.gitkeep
+
+# Bukti uji database v2 (log hasil pengujian Sprint 3) tetap disimpan
+!database/v2/uji/bukti/*.log

@@ -1,0 +1,57 @@
+# ==========================================
+# DEPENDENCIES
+# Diinstall ulang di dalam image lewat `npm install`.
+# Menyalin node_modules dari host bikin image bengkak dan
+# bisa membawa binary native yang salah platform.
+# ==========================================
+node_modules
+npm-debug.log*
+yarn-error.log*
+
+# ==========================================
+# SECRETS & KONFIGURASI LOKAL
+# Nilai env di-inject lewat docker-compose, bukan file .env.
+# ==========================================
+.env
+.env.*
+
+# ==========================================
+# GIT & CI
+# ==========================================
+.git
+.gitignore
+.github
+
+# ==========================================
+# DOKUMENTASI
+# ==========================================
+docs
+*.md
+
+# ==========================================
+# EDITOR & OS
+# ==========================================
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+
+# ==========================================
+# LOG & ARTEFAK LOKAL
+# ==========================================
+logs
+*.log
+coverage
+.nyc_output
+postgres-data
+*.sqlite
+*.db
+uploads
+
+# ==========================================
+# FILE DOCKER SENDIRI
+# ==========================================
+Dockerfile
+.dockerignore
+docker-compose*.yml

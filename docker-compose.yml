@@ -1,0 +1,168 @@
+x-service-template: &service-template
+  restart: unless-stopped
+  networks:
+    - delcom-external-network
+  # PostgreSQL: satu container `db` bersama; alamat dari DB_HOST di .env.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "node",
+        "-e",
+        "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+      ]
+    interval: 10s
+    timeout: 5s
+    retries: 18
+    start_period: 50s
+
+x-db-env: &db-env
+  DB_NAME: ${DB_NAME:-pkm_smkn1sigumpar}
+  DB_USER: ${DB_USER:-postgres}
+  DB_HOST: ${DB_HOST:-external-pkm-smkn1-sigumpar-db}
+  DB_PASSWORD: ${DB_PASSWORD:-postgres}
+  DB_PORT: ${DB_PORT:-5432}
+  DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@${DB_HOST:-external-pkm-smkn1-sigumpar-db}:${DB_PORT:-5432}/${DB_NAME:-pkm_smkn1sigumpar}
+
+services:
+  auth-service:
+    <<: *service-template
+    build: ./backend/auth-service
+    container_name: external-pkm-smkn1-sigumpar-auth-service
+    environment:
+      <<: *db-env
+      NODE_ENV: development
+      PORT: 3005
+      JWT_ISSUER: ${JWT_ISSUER:-smk-sigumpar}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-smk-sigumpar}
+      JWT_TTL_DETIK: ${JWT_TTL_DETIK:-900}
+      REFRESH_TTL_HARI: ${REFRESH_TTL_HARI:-7}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      ADMIN_AWAL_USERNAME: ${ADMIN_AWAL_USERNAME:-admin}
+      ADMIN_AWAL_PASSWORD: ${ADMIN_AWAL_PASSWORD:-admin12345}
+      ADMIN_AWAL_NAMA: ${ADMIN_AWAL_NAMA:-Administrator Tata Usaha}
+    volumes:
+      - ./uploads:/app/uploads
+
+  academic-service:
+    <<: *service-template
+    build: ./backend/academic-service
+    container_name: external-pkm-smkn1-sigumpar-academic-service
+    environment:
+      <<: *db-env
+      NODE_ENV: development
+      PORT: 3003
+    volumes:
+      - ./uploads:/app/uploads
+
+  asset-service:
+    <<: *service-template
+    build: ./backend/asset-service
+    container_name: external-pkm-smkn1-sigumpar-asset-service
+    environment:
+      <<: *db-env
+      NODE_ENV: development
+      PORT: 3004
+    volumes:
+      - ./uploads:/app/uploads
+
+  learning-service:
+    <<: *service-template
+    build: ./backend/learning-service
+    container_name: external-pkm-smkn1-sigumpar-learning-service
+    environment:
+      <<: *db-env
+      NODE_ENV: development
+      PORT: 3006
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://external-pkm-smkn1-sigumpar-auth-service:3005}
+    volumes:
+      - ./uploads:/app/uploads
+
+  student-service:
+    <<: *service-template
+    build: ./backend/student-service
+    container_name: external-pkm-smkn1-sigumpar-student-service
+    environment:
+      <<: *db-env
+      NODE_ENV: development
+      PORT: 3008
+      ACADEMIC_SERVICE_URL: ${ACADEMIC_SERVICE_URL:-http://external-pkm-smkn1-sigumpar-academic-service:3003}
+    depends_on:
+      academic-service:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+
+  vocational-service:
+    <<: *service-template
+    build: ./backend/vocational-service
+    container_name: external-pkm-smkn1-sigumpar-vocational-service
+    environment:
+      <<: *db-env
+      NODE_ENV: development
+      PORT: 3007
+      ACADEMIC_SERVICE_URL: ${ACADEMIC_SERVICE_URL:-http://external-pkm-smkn1-sigumpar-academic-service:3003}
+    depends_on:
+      academic-service:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://${APP_DOMAIN:-localhost}:${API_GATEWAY_PORT:-8001}}
+    container_name: external-pkm-smkn1-sigumpar-frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://${APP_DOMAIN:-localhost}:${API_GATEWAY_PORT:-8001}}
+    networks:
+      - delcom-external-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5173/ >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api-gateway:
+    image: nginx:alpine
+    container_name: external-pkm-smkn1-sigumpar-api-gateway
+    restart: unless-stopped
+    ports:
+      - "${API_GATEWAY_PORT:-8001}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - delcom-external-network
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      academic-service:
+        condition: service_healthy
+      asset-service:
+        condition: service_healthy
+      learning-service:
+        condition: service_healthy
+      student-service:
+        condition: service_healthy
+      vocational-service:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+
+volumes:
+  smk_pgdata:
+
+networks:
+  delcom-external-network:
+    name: delcom-external-network
+    driver: bridge
+    external: true
+    ipam:
+      config:
+        - subnet: 10.33.0.0/16
+          gateway: 10.33.0.1

@@ -1,0 +1,32 @@
+
+===== HASIL UJI MIGRATION v2 =====
+ no |                             uji                             | hasil |                                           keterangan                                           
+----+-------------------------------------------------------------+-------+------------------------------------------------------------------------------------------------
+  1 | A1 Jumlah tabel = 65                                        | LULUS | hasil=65, harapan=65
+  2 | A2 Jumlah foreign key = 114                                 | LULUS | hasil=114, harapan=114
+  3 | A3 Jumlah view = 5                                          | LULUS | hasil=5, harapan=5
+  4 | A4 Jumlah trigger = 4 (3 read-only + 1 pembuat akun)        | LULUS | hasil=4, harapan=4
+  5 | B1 Jumlah role = 8                                          | LULUS | hasil=8, harapan=8
+  6 | B2 Setiap role punya tepat 1 akun demo                      | LULUS | hasil=8, harapan=8
+  7 | B3 Tepat 1 tahun ajaran aktif                               | LULUS | hasil=1, harapan=1
+  8 | B4 Password tersimpan sebagai hash scrypt, bukan teks biasa | LULUS | hasil=0, harapan=0
+  9 | C1 Guru yang sama tidak boleh punya 2 akun dengan role sama | LULUS | ditolak: duplicate key value violates unique constraint "users_guru_id_role_id_idx"
+ 10 | C2 Username unik tanpa melihat huruf besar/kecil            | LULUS | ditolak: duplicate key value violates unique constraint "idx_users_username_lower"
+ 11 | C3 Akun wajib punya role                                    | LULUS | ditolak: null value in column "role_id" of relation "users" violates not-null constraint
+ 12 | C4 Hanya boleh satu tahun ajaran aktif                      | LULUS | ditolak: duplicate key value violates unique constraint "idx_tahun_ajaran_satu_aktif"
+ 13 | D1 Arsip surat tidak bisa diubah                            | LULUS | ditolak: Tabel arsip_surat bersifat read-only: operasi UPDATE tidak diizinkan
+ 14 | D2 Arsip surat tidak bisa dihapus                           | LULUS | ditolak: Tabel arsip_surat bersifat read-only: operasi DELETE tidak diizinkan
+ 15 | D3 Audit log tidak bisa diubah                              | LULUS | ditolak: Tabel audit_log bersifat read-only: operasi UPDATE tidak diizinkan
+ 16 | D4 Audit log tidak bisa dihapus                             | LULUS | ditolak: Tabel audit_log bersifat read-only: operasi DELETE tidak diizinkan
+ 17 | E1 Total bobot nilai harus 100                              | LULUS | ditolak: new row for relation "bobot_nilai" violates check constraint "ck_bobot_nilai_total"
+ 18 | E2 Nilai di luar 0-100 ditolak                              | LULUS | ditolak: new row for relation "nilai_siswa" violates check constraint "ck_nilai_siswa_rentang"
+ 19 | E3 Nilai akhir tanpa harian/perilaku tidak dihitung 0       | LULUS | hasil=82.25, harapan=82.25
+ 20 | E4 Nilai akhir dengan perilaku B = 85                       | LULUS | hasil=82.56, harapan=82.56
+ 21 | F1 Akun yang dibuat Kepala Sekolah ditolak                  | LULUS | ditolak: Hanya akun Tata Usaha yang aktif yang boleh membuat akun
+ 22 | F2 Akun tanpa pencatat pembuat ditolak                      | LULUS | ditolak: Akun baru wajib mencatat pembuatnya (dibuat_oleh)
+ 23 | F3 Akun yang dibuat Tata Usaha diterima                     | LULUS | hasil=1, harapan=1
+
+ lulus | gagal 
+-------+-------
+    23 |     0
+

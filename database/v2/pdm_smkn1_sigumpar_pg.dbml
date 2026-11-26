@@ -1,0 +1,1009 @@
+// =====================================================================
+// PDM (Physical Data Model) Sistem Informasi Akademik SMK Negeri 1 Sigumpar
+// Versi 2 - PostgreSQL 15, ternormalisasi 3NF, dikelompokkan per microservice
+// Sumber: repo proyek-smk-n1-sigumpar-microservice, User Manual,
+//         desain Figma (Input Nilai, Menu PKL, BK)
+//
+// Aturan umum:
+// - Satu database PostgreSQL bersama (schema public), tabel dikelompokkan per service.
+// - Relasi antar-service digambar sebagai Ref. Di kode, service tidak boleh
+//   meng-query tabel milik service lain secara langsung; ambil lewat API.
+// - Kolom turunan (nilai_akhir, predikat, total) tidak disimpan; dihitung lewat VIEW
+//   (lihat file pdm_views_triggers.sql) agar memenuhi 3NF.
+// - Satu akun = satu role. Guru yang punya beberapa peran memiliki beberapa akun.
+// =====================================================================
+
+Project smkn1_sigumpar {
+  database_type: 'PostgreSQL'
+  Note: 'PDM v2 - PostgreSQL 15, 3NF, per microservice'
+}
+
+// ---------------------------------------------------------------------
+// ENUM
+// ---------------------------------------------------------------------
+Enum semester_enum {
+  ganjil
+  genap
+}
+Enum status_hadir_enum {
+  hadir
+  izin
+  sakit
+  alpa
+  terlambat
+}
+Enum hari_enum {
+  senin
+  selasa
+  rabu
+  kamis
+  jumat
+  sabtu
+}
+Enum status_rombel_enum {
+  aktif
+  pindah
+  dikembalikan
+  lulus
+  keluar
+}
+Enum hubungan_enum {
+  ayah
+  ibu
+  wali
+}
+Enum predikat_perilaku_enum {
+  A
+  B
+  C
+  D
+  E
+}
+Enum jenis_harian_enum {
+  kuis
+  tugas_harian
+  ulangan_harian
+  lisan
+  lainnya
+}
+Enum status_review_enum {
+  disetujui
+  revisi
+  ditolak
+}
+Enum peran_reviewer_enum {
+  kepala_sekolah
+  waka_sekolah
+}
+Enum kondisi_kebersihan_enum {
+  sangat_bersih
+  bersih
+  cukup
+  kotor
+}
+Enum status_program_enum {
+  belum_mulai
+  berjalan
+  selesai
+  batal
+}
+Enum status_penempatan_enum {
+  aktif
+  dipindahkan
+  selesai
+}
+Enum penyetuju_pindah_enum {
+  koordinator_pkl
+  waka_humas
+  kepala_sekolah
+}
+Enum kategori_bk_enum {
+  akademik
+  kedisiplinan
+  kehadiran
+  perilaku
+  lainnya
+}
+Enum status_panggilan_enum {
+  dijadwalkan
+  hadir
+  tidak_hadir
+  dijadwal_ulang
+  selesai
+}
+Enum jenis_pendampingan_enum {
+  pendampingan
+  pembinaan
+}
+Enum status_pendampingan_enum {
+  masih_berjalan
+  selesai
+}
+Enum jenis_pengembalian_enum {
+  sementara
+  permanen
+}
+Enum status_pengembalian_enum {
+  diajukan
+  disetujui
+  ditolak
+  selesai
+}
+Enum status_respon_enum {
+  menunggu
+  disetujui
+  ditolak
+}
+Enum peran_responden_enum {
+  bendahara
+  kepala_sekolah
+}
+
+// =====================================================================
+// 1. AUTH-SERVICE  (akun, role, sesi, audit)
+// =====================================================================
+Table roles {
+  id serial [pk]
+  nama varchar(50) [unique, not null, note: 'kepala-sekolah, waka-sekolah, tata-usaha, wali-kelas, guru-mapel, pramuka, vokasi, bk']
+  label varchar(100) [not null]
+}
+
+Table users {
+  id uuid [pk, default: `gen_random_uuid()`]
+  username varchar(50) [not null, note: 'unik tanpa memperhatikan huruf besar/kecil: UNIQUE INDEX (LOWER(username))']
+  nama_lengkap varchar(150) [not null]
+  email varchar(150)
+  password_hash text [not null, note: 'scrypt$N$r$p$salt$hash']
+  role_id int [not null, ref: > roles.id, note: '1 akun = 1 role; menggantikan tabel user_roles']
+  guru_id int [ref: > guru.id, note: 'orang di balik akun; null untuk staf non-guru. 1 guru boleh punya beberapa akun (1 per role)']
+  dibuat_oleh uuid [ref: > users.id, note: 'akun Tata Usaha yang membuat akun ini; null hanya untuk akun admin pertama (dibuat sistem)']
+  is_aktif boolean [not null, default: true]
+  harus_ganti_password boolean [not null, default: true]
+  foto_profil varchar(255)
+  gagal_login smallint [not null, default: 0]
+  terkunci_sampai timestamptz
+  password_updated_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  indexes {
+    guru_id
+    (guru_id, role_id) [unique, note: 'satu guru tidak boleh punya 2 akun dengan role sama']
+  }
+}
+
+Table refresh_tokens {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  token_hash text [unique, not null]
+  user_agent text
+  ip text
+  expires_at timestamptz [not null]
+  revoked_at timestamptz
+  replaced_by uuid [ref: - refresh_tokens.id]
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table jwt_keys {
+  kid text [pk]
+  private_pem text [not null]
+  public_pem text [not null]
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table audit_log {
+  id bigserial [pk]
+  actor_user_id uuid [ref: > users.id]
+  actor_username varchar(50) [note: 'snapshot saat kejadian (log historis, bukan data master)']
+  service varchar(30) [not null, note: 'auth, academic, learning, student, vocational, asset']
+  aksi varchar(60) [not null, note: 'mis. CREATE, UPDATE, DELETE, LOGIN, RESET_PASSWORD']
+  entitas varchar(60) [not null, note: 'nama tabel yang diubah']
+  entitas_id varchar(64) [note: 'id baris yang diubah']
+  data_lama jsonb
+  data_baru jsonb
+  ip text
+  created_at timestamptz [not null, default: `now()`]
+  indexes {
+    created_at
+    (entitas, entitas_id)
+  }
+  Note: 'APPEND-ONLY: UPDATE dan DELETE ditolak trigger. Dipakai semua service (termasuk BK).'
+}
+
+TableGroup auth_service {
+  roles
+  users
+  refresh_tokens
+  jwt_keys
+  audit_log
+}
+
+// =====================================================================
+// 2. ACADEMIC-SERVICE  (master akademik, jadwal, administrasi TU)
+// =====================================================================
+Table tahun_ajaran {
+  id serial [pk]
+  label varchar(20) [unique, not null, note: 'contoh 2026/2027']
+  tanggal_mulai date
+  tanggal_selesai date
+  is_active boolean [not null, default: false, note: 'hanya satu baris true (partial unique index)']
+}
+
+Table guru {
+  id serial [pk]
+  nip varchar(30) [unique]
+  nama_lengkap varchar(150) [not null]
+  email varchar(150)
+  no_telepon varchar(20)
+  jabatan varchar(100)
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table kelas {
+  id serial [pk]
+  nama_kelas varchar(50) [not null, note: 'contoh XI RPL 1']
+  tingkat varchar(10) [not null, note: 'X, XI, XII']
+  jurusan varchar(100)
+}
+
+Table kelas_tahun_ajaran {
+  id serial [pk]
+  kelas_id int [not null, ref: > kelas.id]
+  tahun_ajaran_id int [not null, ref: > tahun_ajaran.id]
+  wali_kelas_guru_id int [ref: > guru.id, note: 'menggantikan wali_kelas_id UUID + wali_kelas_nama']
+  indexes {
+    (kelas_id, tahun_ajaran_id) [unique]
+  }
+  Note: 'Rombel: kelas pada tahun ajaran tertentu'
+}
+
+Table siswa {
+  id serial [pk]
+  nisn varchar(20) [unique, not null]
+  nama_lengkap varchar(150) [not null]
+  jenis_kelamin char(1) [note: 'L / P']
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+  Note: 'kelas_id dihapus: kelas siswa ditentukan lewat siswa_kelas_tahun_ajaran'
+}
+
+Table siswa_kelas_tahun_ajaran {
+  id serial [pk]
+  siswa_id int [not null, ref: > siswa.id]
+  kelas_tahun_ajaran_id int [not null, ref: > kelas_tahun_ajaran.id]
+  status status_rombel_enum [not null, default: 'aktif']
+  indexes {
+    (siswa_id, kelas_tahun_ajaran_id) [unique]
+  }
+}
+
+Table orang_tua {
+  id serial [pk]
+  siswa_id int [not null, ref: > siswa.id]
+  nama varchar(150) [not null]
+  hubungan hubungan_enum [not null]
+  no_hp varchar(20)
+}
+
+Table mata_pelajaran {
+  id serial [pk]
+  kode varchar(20) [unique]
+  nama_mapel varchar(100) [not null]
+  kkm smallint [not null, default: 75]
+  Note: 'kelas_id dan guru_mapel_id dipindah ke tabel pengampu'
+}
+
+Table pengampu {
+  id serial [pk]
+  mapel_id int [not null, ref: > mata_pelajaran.id]
+  kelas_tahun_ajaran_id int [not null, ref: > kelas_tahun_ajaran.id]
+  guru_id int [not null, ref: > guru.id]
+  indexes {
+    (mapel_id, kelas_tahun_ajaran_id) [unique]
+  }
+  Note: 'Guru X mengajar mapel Y di rombel Z. Dipakai nilai, jadwal, catatan mengajar'
+}
+
+Table jadwal_mengajar {
+  id serial [pk]
+  pengampu_id int [not null, ref: > pengampu.id]
+  hari hari_enum [not null]
+  jam_ke smallint
+  ruang varchar(50)
+  waktu_mulai time [not null]
+  waktu_berakhir time [not null]
+  Note: 'guru, kelas, mapel diambil dari pengampu (tidak disalin)'
+}
+
+Table jadwal_piket {
+  id serial [pk]
+  tahun_ajaran_id int [not null, ref: > tahun_ajaran.id]
+  tanggal date [not null]
+  guru_id int [not null, ref: > guru.id]
+  keterangan text
+  dibuat_oleh uuid [ref: > users.id]
+}
+
+Table jadwal_upacara {
+  id serial [pk]
+  tanggal date [not null]
+  petugas_guru_id int [ref: > guru.id]
+  tugas varchar(150) [not null]
+  keterangan text
+  dibuat_oleh uuid [not null, ref: > users.id, note: 'hanya akun role tata-usaha']
+  Note: 'Hanya dikelola Tata Usaha; role lain read-only'
+}
+
+Table pengumuman {
+  id serial [pk]
+  judul varchar(255) [not null]
+  isi text
+  tanggal_berakhir timestamp
+  dibuat_oleh uuid [ref: > users.id]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table arsip_surat {
+  id serial [pk]
+  nomor_surat varchar(100) [unique, not null]
+  judul varchar(255) [not null]
+  kategori varchar(100)
+  tanggal_surat date [not null]
+  file_url text [not null]
+  file_name varchar(255)
+  file_mime varchar(100)
+  menggantikan_id int [ref: - arsip_surat.id, note: 'jika arsip direvisi, baris baru menunjuk ke arsip lama']
+  diunggah_oleh uuid [ref: > users.id]
+  created_at timestamp [not null, default: `now()`]
+  Note: 'READ-ONLY: setelah disimpan tidak bisa UPDATE/DELETE (trigger). Revisi = baris baru.'
+}
+
+Table supervisi_guru {
+  id serial [pk]
+  pengampu_id int [not null, ref: > pengampu.id, note: 'menggantikan guru_id + kelas + mata_pelajaran teks']
+  tanggal date [not null]
+  aspek_penilaian varchar(150)
+  nilai numeric(5,2)
+  catatan text
+  rekomendasi text
+  supervisor_user_id uuid [ref: > users.id]
+}
+
+Table program_kerja {
+  id serial [pk]
+  tahun_ajaran_id int [not null, ref: > tahun_ajaran.id]
+  nama_program varchar(200) [not null]
+  bidang varchar(100)
+  tanggal_mulai date
+  tanggal_selesai date
+  penanggung_jawab_guru_id int [ref: > guru.id, note: 'menggantikan penanggung_jawab teks']
+  status status_program_enum [not null, default: 'belum_mulai']
+  deskripsi text
+}
+
+Table perangkat_guru {
+  id serial [pk]
+  guru_id int [not null, ref: > guru.id]
+  tahun_ajaran_id int [not null, ref: > tahun_ajaran.id]
+  nama_perangkat varchar(200) [not null]
+  jenis varchar(100)
+  status varchar(30) [not null, default: 'belum_lengkap']
+  catatan text
+  Note: 'Ceklist kelengkapan perangkat oleh Waka'
+}
+
+TableGroup academic_service {
+  tahun_ajaran
+  guru
+  kelas
+  kelas_tahun_ajaran
+  siswa
+  siswa_kelas_tahun_ajaran
+  orang_tua
+  mata_pelajaran
+  pengampu
+  jadwal_mengajar
+  jadwal_piket
+  jadwal_upacara
+  pengumuman
+  arsip_surat
+  supervisi_guru
+  program_kerja
+  perangkat_guru
+}
+
+// =====================================================================
+// 3. LEARNING-SERVICE  (absensi guru, catatan mengajar, perangkat, evaluasi)
+// =====================================================================
+Table absensi_guru {
+  id serial [pk]
+  guru_id int [not null, ref: > guru.id, note: 'per orang, bukan per akun; menggantikan user_id + nama_guru']
+  tanggal date [not null]
+  jam_masuk timestamptz
+  jam_keluar timestamptz
+  foto text
+  foto_pulang text
+  status status_hadir_enum [not null, default: 'hadir']
+  keterangan text
+  indexes {
+    (guru_id, tanggal) [unique]
+  }
+}
+
+Table catatan_mengajar {
+  id serial [pk]
+  pengampu_id int [not null, ref: > pengampu.id]
+  tanggal date [not null]
+  jam_mulai time
+  jam_selesai time
+  materi text [not null]
+  metode text
+  kendala text
+  tindak_lanjut text
+}
+
+Table perangkat_pembelajaran {
+  id serial [pk]
+  guru_id int [not null, ref: > guru.id]
+  mapel_id int [ref: > mata_pelajaran.id]
+  nama_dokumen varchar(200) [not null]
+  jenis_dokumen varchar(50) [not null, note: 'RPP, silabus, modul, lainnya']
+  file_name varchar(255)
+  file_path varchar(255)
+  file_mime varchar(100)
+  versi int [not null, default: 1]
+  parent_id int [ref: > perangkat_pembelajaran.id, note: 'versi sebelumnya']
+  tanggal_upload timestamp [not null, default: `now()`]
+  Note: 'status_review dihapus; status terkini = review terakhir di review_perangkat'
+}
+
+Table review_perangkat {
+  id serial [pk]
+  perangkat_id int [not null, ref: > perangkat_pembelajaran.id]
+  reviewer_user_id uuid [not null, ref: > users.id]
+  peran_reviewer peran_reviewer_enum [not null]
+  status status_review_enum [not null]
+  komentar text
+  created_at timestamp [not null, default: `now()`]
+  Note: 'Menggabungkan review_kepsek dan review_wakasek (struktur sama)'
+}
+
+Table evaluasi_guru {
+  id serial [pk]
+  guru_id int [not null, ref: > guru.id]
+  tahun_ajaran_id int [not null, ref: > tahun_ajaran.id]
+  semester semester_enum [not null]
+  evaluator_user_id uuid [not null, ref: > users.id]
+  perencanaan numeric(5,2) [note: 'bobot 20%']
+  pelaksanaan numeric(5,2) [note: 'bobot 30%']
+  penilaian numeric(5,2) [note: 'bobot 20%']
+  pengembangan numeric(5,2) [note: 'bobot 15%']
+  kedisiplinan numeric(5,2) [note: 'bobot 15%']
+  catatan text
+  created_at timestamp [not null, default: `now()`]
+  Note: 'JSONB penilaian diganti 5 kolom aspek. skor & predikat dihitung di VIEW v_evaluasi_guru'
+}
+
+TableGroup learning_service {
+  absensi_guru
+  catatan_mengajar
+  perangkat_pembelajaran
+  review_perangkat
+  evaluasi_guru
+}
+
+// =====================================================================
+// 4. STUDENT-SERVICE  (nilai, presensi, wali kelas, BK)
+// =====================================================================
+Table bobot_nilai {
+  id serial [pk]
+  pengampu_id int [not null, ref: > pengampu.id]
+  semester semester_enum [not null]
+  bobot_harian numeric(5,2) [not null, default: 10]
+  bobot_tugas numeric(5,2) [not null, default: 10]
+  bobot_kuis numeric(5,2) [not null, default: 10]
+  bobot_uts numeric(5,2) [not null, default: 20]
+  bobot_uas numeric(5,2) [not null, default: 25]
+  bobot_praktik numeric(5,2) [not null, default: 15]
+  bobot_perilaku numeric(5,2) [not null, default: 10]
+  indexes {
+    (pengampu_id, semester) [unique]
+  }
+  Note: 'CHECK total semua bobot = 100. Dipindah dari setiap baris nilai_siswa'
+}
+
+Table konversi_perilaku {
+  id serial [pk]
+  pengampu_id int [not null, ref: > pengampu.id]
+  predikat predikat_perilaku_enum [not null]
+  nilai_angka numeric(5,2) [not null, note: 'diisi guru 0-100']
+  indexes {
+    (pengampu_id, predikat) [unique]
+  }
+}
+
+Table nilai_siswa {
+  id serial [pk]
+  siswa_id int [not null, ref: > siswa.id]
+  pengampu_id int [not null, ref: > pengampu.id, note: 'menggantikan kelas_id, mapel_id, guru_id, tahun_ajar']
+  semester semester_enum [not null]
+  tugas numeric(5,2) [note: 'NULL = belum ada nilai (bukan 0)']
+  kuis numeric(5,2)
+  uts numeric(5,2)
+  uas numeric(5,2)
+  praktik numeric(5,2)
+  predikat_perilaku predikat_perilaku_enum
+  updated_at timestamp [default: `now()`]
+  indexes {
+    (siswa_id, pengampu_id, semester) [unique]
+  }
+  Note: 'bobot_* dipindah ke bobot_nilai; nilai_akhir dihitung di VIEW v_nilai_akhir'
+}
+
+Table riwayat_nilai {
+  id serial [pk]
+  nilai_id int [not null, ref: > nilai_siswa.id]
+  komponen varchar(20) [not null]
+  nilai_lama varchar(10)
+  nilai_baru varchar(10)
+  diubah_oleh uuid [ref: > users.id]
+  diubah_pada timestamp [not null, default: `now()`]
+}
+
+Table penilaian_harian {
+  id serial [pk]
+  pengampu_id int [not null, ref: > pengampu.id]
+  semester semester_enum [not null]
+  urutan smallint [not null, note: 'P1, P2, dst']
+  judul varchar(150) [not null]
+  jenis jenis_harian_enum [not null]
+  tanggal date [not null]
+  keterangan text
+  indexes {
+    (pengampu_id, semester, urutan) [unique]
+  }
+}
+
+Table nilai_harian {
+  id serial [pk]
+  penilaian_harian_id int [not null, ref: > penilaian_harian.id]
+  siswa_id int [not null, ref: > siswa.id]
+  nilai numeric(5,2) [note: 'NULL jika siswa tidak ikut']
+  indexes {
+    (penilaian_harian_id, siswa_id) [unique]
+  }
+}
+
+Table absensi_siswa {
+  id serial [pk]
+  jadwal_id int [not null, ref: > jadwal_mengajar.id, note: 'kelas, mapel, guru, tahun ajaran diturunkan dari jadwal']
+  siswa_id int [not null, ref: > siswa.id]
+  tanggal date [not null]
+  status status_hadir_enum [not null]
+  keterangan text
+  dicatat_oleh uuid [ref: > users.id]
+  indexes {
+    (siswa_id, tanggal, jadwal_id) [unique]
+  }
+}
+
+Table presensi_harian {
+  id serial [pk]
+  siswa_id int [not null, ref: > siswa.id]
+  tanggal date [not null]
+  status status_hadir_enum [not null]
+  keterangan text
+  dicatat_oleh uuid [ref: > users.id]
+  indexes {
+    (siswa_id, tanggal) [unique]
+  }
+  Note: 'Presensi harian wali kelas (dulu absensi_siswa dengan jadwal_id NULL)'
+}
+
+Table catatan_parenting {
+  id serial [pk]
+  kelas_tahun_ajaran_id int [not null, ref: > kelas_tahun_ajaran.id]
+  tanggal date [not null]
+  kehadiran_ortu smallint [default: 0]
+  agenda varchar(255) [not null]
+  ringkasan text
+  dokumentasi_url text
+  dibuat_oleh uuid [ref: > users.id]
+}
+
+Table kebersihan_kelas {
+  id serial [pk]
+  kelas_tahun_ajaran_id int [not null, ref: > kelas_tahun_ajaran.id]
+  tanggal date [not null]
+  meja_kursi kondisi_kebersihan_enum
+  lantai kondisi_kebersihan_enum
+  papan_tulis kondisi_kebersihan_enum
+  jendela_pintu kondisi_kebersihan_enum
+  sampah kondisi_kebersihan_enum
+  catatan text
+  foto_url text
+  dinilai_oleh uuid [ref: > users.id]
+  Note: 'JSONB penilaian diganti 5 kolom aspek'
+}
+
+Table refleksi_wali_kelas {
+  id serial [pk]
+  kelas_tahun_ajaran_id int [not null, ref: > kelas_tahun_ajaran.id]
+  tanggal date [not null]
+  capaian text
+  tantangan text
+  rencana text
+  dibuat_oleh uuid [ref: > users.id]
+}
+
+Table pemanggilan_ortu {
+  id serial [pk]
+  siswa_id int [not null, ref: > siswa.id]
+  orang_tua_id int [ref: > orang_tua.id]
+  nomor_surat varchar(60) [unique]
+  tanggal_surat date
+  tanggal_panggilan date [not null]
+  jam time
+  tempat varchar(100)
+  kategori kategori_bk_enum [not null]
+  alasan text [not null]
+  status status_panggilan_enum [not null, default: 'dijadwalkan']
+  hasil_pertemuan text
+  kesepakatan text
+  tindak_lanjut text
+  dibuat_oleh uuid [not null, ref: > users.id, note: 'akun BK atau wali kelas']
+  Note: 'Menggantikan surat_panggilan_siswa'
+}
+
+Table pendampingan_ortu {
+  id serial [pk]
+  siswa_id int [not null, ref: > siswa.id]
+  orang_tua_id int [ref: > orang_tua.id]
+  jenis jenis_pendampingan_enum [not null]
+  tanggal date [not null]
+  sesi_ke smallint
+  topik varchar(200) [not null]
+  permasalahan text
+  uraian_kegiatan text
+  hasil text
+  rencana_tindak_lanjut text
+  status status_pendampingan_enum [not null, default: 'masih_berjalan']
+  dibuat_oleh uuid [not null, ref: > users.id]
+}
+
+Table pengembalian_siswa {
+  id serial [pk]
+  siswa_id int [not null, ref: > siswa.id]
+  orang_tua_id int [ref: > orang_tua.id]
+  nomor_surat varchar(60) [unique]
+  tanggal_pengajuan date [not null]
+  jenis jenis_pengembalian_enum [not null]
+  tanggal_mulai date
+  tanggal_sampai date [note: 'NULL jika permanen']
+  alasan text [not null]
+  dasar_pertimbangan text
+  status status_pengembalian_enum [not null, default: 'diajukan']
+  diajukan_oleh uuid [not null, ref: > users.id]
+  diputuskan_oleh uuid [ref: > users.id, note: 'akun kepala-sekolah']
+  tanggal_keputusan timestamp
+  catatan_keputusan text
+}
+
+Table lampiran_bk {
+  id serial [pk]
+  pemanggilan_id int [ref: > pemanggilan_ortu.id]
+  pendampingan_id int [ref: > pendampingan_ortu.id]
+  pengembalian_id int [ref: > pengembalian_siswa.id]
+  file_path varchar(255) [not null, note: 'PDF/JPG/PNG maks 5 MB']
+  file_mime varchar(100)
+  diunggah_oleh uuid [ref: > users.id]
+  diunggah_pada timestamp [not null, default: `now()`]
+  Note: 'CHECK num_nonnulls(pemanggilan_id, pendampingan_id, pengembalian_id) = 1'
+}
+
+TableGroup student_service {
+  bobot_nilai
+  konversi_perilaku
+  nilai_siswa
+  riwayat_nilai
+  penilaian_harian
+  nilai_harian
+  absensi_siswa
+  presensi_harian
+  catatan_parenting
+  kebersihan_kelas
+  refleksi_wali_kelas
+  pemanggilan_ortu
+  pendampingan_ortu
+  pengembalian_siswa
+  lampiran_bk
+}
+
+// =====================================================================
+// 5. VOCATIONAL-SERVICE  (Pramuka, PKL, UKK)
+// =====================================================================
+Table kelas_pramuka {
+  id serial [pk]
+  nama_regu varchar(100) [not null]
+  tahun_ajaran_id int [ref: > tahun_ajaran.id]
+}
+
+Table anggota_regu {
+  id serial [pk]
+  regu_id int [not null, ref: > kelas_pramuka.id]
+  siswa_id int [not null, ref: > siswa.id]
+  indexes {
+    (regu_id, siswa_id) [unique]
+  }
+  Note: 'nama_lengkap dihapus (ambil dari siswa)'
+}
+
+Table kegiatan_pramuka {
+  id serial [pk]
+  kelas_tahun_ajaran_id int [not null, ref: > kelas_tahun_ajaran.id]
+  tanggal date [not null]
+  deskripsi varchar(255)
+  dibuat_oleh uuid [ref: > users.id]
+  indexes {
+    (kelas_tahun_ajaran_id, tanggal) [unique]
+  }
+}
+
+Table absensi_pramuka {
+  id serial [pk]
+  kegiatan_id int [not null, ref: > kegiatan_pramuka.id]
+  siswa_id int [not null, ref: > siswa.id]
+  status status_hadir_enum [not null]
+  keterangan text
+  indexes {
+    (kegiatan_id, siswa_id) [unique]
+  }
+  Note: 'nama_lengkap, nisn, kelas_id, tanggal dipindah/dihapus'
+}
+
+Table silabus_pramuka {
+  id serial [pk]
+  kelas_tahun_ajaran_id int [ref: > kelas_tahun_ajaran.id]
+  judul_kegiatan varchar(255) [not null]
+  tanggal date [not null]
+  file_path varchar(255)
+  file_nama varchar(255)
+  file_mime varchar(100)
+  dibuat_oleh uuid [ref: > users.id]
+}
+
+Table laporan_pramuka {
+  id serial [pk]
+  kelas_tahun_ajaran_id int [ref: > kelas_tahun_ajaran.id, note: 'NULL = laporan kegiatan umum']
+  judul varchar(255) [not null]
+  deskripsi text
+  tanggal date [not null]
+  file_path varchar(255)
+  file_nama varchar(255)
+  file_mime varchar(100)
+  dibuat_oleh uuid [ref: > users.id]
+  Note: 'Menggabungkan laporan_pramuka dan laporan_kegiatan'
+}
+
+Table perusahaan_pkl {
+  id serial [pk]
+  nama varchar(150) [not null]
+  alamat text
+  bidang_usaha varchar(100)
+}
+
+Table penempatan_pkl {
+  id serial [pk]
+  siswa_id int [not null, ref: > siswa.id]
+  perusahaan_id int [not null, ref: > perusahaan_pkl.id]
+  tahun_ajaran_id int [not null, ref: > tahun_ajaran.id]
+  posisi varchar(150)
+  pembimbing_industri varchar(150)
+  kontak_pembimbing varchar(100)
+  tanggal_mulai date [not null]
+  estimasi_selesai date
+  tanggal_berakhir date
+  foto_url text
+  deskripsi_pekerjaan text
+  status status_penempatan_enum [not null, default: 'aktif']
+  Note: 'Menggantikan laporan_lokasi_pkl (nama_siswa, nisn, kelas, nama_perusahaan tidak disalin)'
+}
+
+Table perpindahan_pkl {
+  id serial [pk]
+  penempatan_asal_id int [not null, ref: > penempatan_pkl.id]
+  penempatan_tujuan_id int [unique, not null, ref: - penempatan_pkl.id]
+  urutan smallint [not null]
+  tanggal_pindah date [not null]
+  alasan text [not null]
+  disetujui_oleh penyetuju_pindah_enum [not null]
+  dokumen_pendukung varchar(255)
+  dicatat_oleh uuid [ref: > users.id]
+  dicatat_pada timestamp [not null, default: `now()`]
+  Note: 'Permanen (UPDATE/DELETE ditolak trigger). Siswa diambil dari penempatan asal. Perbaikan via koreksi_perpindahan'
+}
+
+Table koreksi_perpindahan {
+  id serial [pk]
+  perpindahan_id int [not null, ref: > perpindahan_pkl.id]
+  versi smallint [not null]
+  bagian_dikoreksi varchar(50) [not null]
+  nilai_sebelumnya text
+  nilai_koreksi text [not null]
+  alasan_koreksi text [not null]
+  dikoreksi_oleh uuid [ref: > users.id]
+  dikoreksi_pada timestamp [not null, default: `now()`]
+  indexes {
+    (perpindahan_id, versi) [unique]
+  }
+}
+
+Table laporan_progres_pkl {
+  id serial [pk]
+  penempatan_id int [not null, ref: > penempatan_pkl.id]
+  minggu_ke smallint [not null]
+  deskripsi text [not null]
+  created_at timestamp [default: `now()`]
+  indexes {
+    (penempatan_id, minggu_ke) [unique]
+  }
+}
+
+Table pengaturan_pkl {
+  tahun_ajaran_id int [pk, ref: - tahun_ajaran.id]
+  bobot_praktik numeric(5,2) [not null]
+  bobot_sikap numeric(5,2) [not null]
+  bobot_laporan numeric(5,2) [not null]
+  Note: 'CHECK total = 100. Bobot dipindah dari nilai_pkl'
+}
+
+Table nilai_pkl {
+  id serial [pk]
+  siswa_id int [not null, ref: > siswa.id]
+  tahun_ajaran_id int [not null, ref: > tahun_ajaran.id]
+  nilai_praktik numeric(5,2)
+  nilai_sikap numeric(5,2)
+  nilai_laporan numeric(5,2)
+  catatan text
+  dinilai_oleh uuid [ref: > users.id]
+  indexes {
+    (siswa_id, tahun_ajaran_id) [unique]
+  }
+  Note: 'nilai_akhir & predikat dihitung di VIEW v_nilai_pkl'
+}
+
+Table pengaturan_ukk {
+  tahun_ajaran_id int [pk, ref: - tahun_ajaran.id]
+  bobot_praktik numeric(5,2) [not null, default: 70]
+  bobot_sikap numeric(5,2) [not null, default: 30]
+  updated_by uuid [ref: > users.id]
+  Note: 'CHECK total = 100'
+}
+
+Table soal_ukk {
+  id serial [pk]
+  kelas_tahun_ajaran_id int [not null, ref: > kelas_tahun_ajaran.id, note: 'jurusan & tahun ajaran diturunkan dari rombel']
+  judul_tugas varchar(255) [not null]
+  instruksi text [not null]
+  link_lampiran text
+  file_path varchar(255)
+  file_nama varchar(255)
+  file_mime varchar(100)
+}
+
+Table progres_ukk {
+  id serial [pk]
+  siswa_id int [not null, ref: > siswa.id]
+  soal_id int [not null, ref: > soal_ukk.id]
+  tahap varchar(255) [not null]
+  deskripsi text
+  link_bukti text
+  tanggal date [not null]
+}
+
+Table nilai_ukk {
+  id serial [pk]
+  siswa_id int [not null, ref: > siswa.id]
+  soal_id int [not null, ref: > soal_ukk.id]
+  nilai_praktik numeric(5,2)
+  nilai_sikap numeric(5,2)
+  catatan_penguji text
+  dinilai_oleh uuid [ref: > users.id]
+  indexes {
+    (siswa_id, soal_id) [unique]
+  }
+  Note: 'bobot dari pengaturan_ukk; nilai_akhir di VIEW v_nilai_ukk'
+}
+
+Table sertifikat_ukk {
+  id serial [pk]
+  siswa_id int [not null, ref: > siswa.id]
+  nomor_sertifikat varchar(100) [unique, not null]
+  tanggal_terbit date
+  predikat varchar(50) [note: 'dari lembaga penguji, bukan hasil hitung']
+  catatan text
+  file_path varchar(255)
+  file_nama varchar(255)
+  file_mime varchar(100)
+}
+
+TableGroup vocational_service {
+  kelas_pramuka
+  anggota_regu
+  kegiatan_pramuka
+  absensi_pramuka
+  silabus_pramuka
+  laporan_pramuka
+  perusahaan_pkl
+  penempatan_pkl
+  perpindahan_pkl
+  koreksi_perpindahan
+  laporan_progres_pkl
+  pengaturan_pkl
+  nilai_pkl
+  pengaturan_ukk
+  soal_ukk
+  progres_ukk
+  nilai_ukk
+  sertifikat_ukk
+}
+
+// =====================================================================
+// 6. ASSET-SERVICE  (peminjaman & pengajuan barang)
+// =====================================================================
+Table barang {
+  id serial [pk]
+  nama_barang varchar(150) [not null]
+  kategori varchar(100)
+  jumlah_total int [not null, default: 0]
+  kondisi varchar(50)
+  Note: 'Baru: peminjaman_barang.barang_id sebelumnya tidak punya tabel induk'
+}
+
+Table peminjaman_barang {
+  id serial [pk]
+  user_id uuid [not null, ref: > users.id]
+  barang_id int [not null, ref: > barang.id]
+  jumlah int [not null, default: 1]
+  tanggal_pinjam date [not null]
+  tanggal_kembali date
+  keperluan text
+}
+
+Table respon_peminjaman {
+  id serial [pk]
+  peminjaman_id int [not null, ref: > peminjaman_barang.id]
+  status status_respon_enum [not null]
+  catatan text
+  direspon_oleh uuid [ref: > users.id]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table pengajuan_alat_barang {
+  id serial [pk]
+  user_id uuid [not null, ref: > users.id]
+  nama_alat varchar(100) [not null]
+  jumlah int [not null]
+  alasan text
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table respon_pengajuan {
+  id serial [pk]
+  pengajuan_id int [not null, ref: > pengajuan_alat_barang.id]
+  peran_responden peran_responden_enum [not null]
+  status status_respon_enum [not null]
+  catatan text
+  direspon_oleh uuid [ref: > users.id]
+  created_at timestamp [not null, default: `now()`]
+  Note: 'Menggabungkan respon_pengajuan_bendahara dan respon_pengajuan_kepsek'
+}
+
+TableGroup asset_service {
+  barang
+  peminjaman_barang
+  respon_peminjaman
+  pengajuan_alat_barang
+  respon_pengajuan
+}
