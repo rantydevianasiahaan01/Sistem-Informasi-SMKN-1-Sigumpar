@@ -4,6 +4,7 @@ const morgan = require("morgan");
 const path = require("path");
 const mime = require("mime-types");
 const studentRoutes = require("./routes/studentRoutes");
+const bkRoutes = require("./routes/bkRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 3008;
@@ -56,6 +57,8 @@ app.get("/health", (req, res) => {
   });
 });
 
+// Modul BK skema v2. Tidak ada rute lama di /api/student/bk.
+app.use("/api/student/bk", bkRoutes);
 app.use("/api/student", studentRoutes);
 
 app.use((req, res) => {
