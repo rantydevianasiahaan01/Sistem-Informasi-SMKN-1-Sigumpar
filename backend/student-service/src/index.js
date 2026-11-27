@@ -5,6 +5,7 @@ const path = require("path");
 const mime = require("mime-types");
 const studentRoutes = require("./routes/studentRoutes");
 const inputNilaiRoutes = require("./routes/inputNilaiRoutes");
+const bkRoutes = require("./routes/bkRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 3008;
@@ -61,6 +62,8 @@ app.get("/health", (req, res) => {
 // studentRoutes; rute lama /api/student/nilai* tidak cocok di sini dan
 // diteruskan ke studentRoutes.
 app.use("/api/student/nilai", inputNilaiRoutes);
+// Modul BK Sprint 4 (docs/api/openapi.yaml). Tidak ada rute lama di /bk.
+app.use("/api/student/bk", bkRoutes);
 app.use("/api/student", studentRoutes);
 
 app.use((req, res) => {
