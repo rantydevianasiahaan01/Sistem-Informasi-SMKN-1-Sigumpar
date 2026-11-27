@@ -1004,6 +1004,7 @@ paths:
       description: |
         Isi tepat satu dari `pemanggilan_id`, `pendampingan_id`, `pengembalian_id`.
         Front end menyusun tampilan surat dari template dengan data ini.
+        Wali kelas hanya untuk surat pemanggilan (satu-satunya catatan BK yang bisa ia buat).
         **MENUNGGU KONFIRMASI (T-01):** format nomor surat belum ditetapkan sekolah;
         `nomor_surat_usulan` selalu `null` sampai formatnya disepakati.
       x-roles: [bk, wali-kelas]
@@ -1056,7 +1057,9 @@ paths:
       description: |
         Menyimpan salinan data surat saat diterbitkan (`data_surat`), sehingga isi
         arsip tidak berubah walaupun data sumbernya diubah kemudian. Arsip tidak
-        bisa diubah atau dihapus (K-11). Wali kelas hanya untuk siswa kelasnya.
+        bisa diubah atau dihapus (K-11). Wali kelas hanya untuk surat pemanggilan
+        siswa kelasnya. Surat pengembalian baru bisa diterbitkan setelah disetujui
+        kepala sekolah (409 jika belum).
         **MENUNGGU KONFIRMASI (T-01):** `nomor_surat` sementara diisi manual
         (boleh kosong, tidak boleh kembar).
       x-roles: [bk, wali-kelas]
@@ -1089,7 +1092,14 @@ paths:
         '401': { $ref: '#/components/responses/BelumLogin' }
         '403': { $ref: '#/components/responses/TidakBerhak' }
         '404': { $ref: '#/components/responses/TidakDitemukan' }
-        '409': { $ref: '#/components/responses/NomorSuratDipakai' }
+        '409':
+          description: Nomor surat sudah dipakai, atau pengembalian belum disetujui
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gagal' }
+              examples:
+                nomor: { value: { success: false, message: Nomor surat sudah dipakai } }
+                belum_disetujui: { value: { success: false, message: Surat pengembalian baru bisa diterbitkan setelah disetujui kepala sekolah } }
 
   /api/student/bk/surat/{id}:
     parameters:
