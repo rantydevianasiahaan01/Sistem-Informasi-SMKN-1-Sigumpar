@@ -4,28 +4,21 @@ const sandi = require("../services/sandi");
 /**
  * Akun tata usaha pertama.
  *
- * Tanpa ini sistem tidak bisa dimasuki sama sekali setelah Keycloak dilepas:
- * akun dibuat oleh tata usaha, tapi tata usaha sendiri butuh akun untuk masuk.
+ * Tanpa ini sistem tidak bisa dimasuki sama sekali: akun hanya boleh dibuat
+ * oleh Tata Usaha, tetapi Tata Usaha sendiri butuh akun untuk masuk.
  * Kredensialnya diambil dari .env dan akun langsung ditandai wajib ganti
  * password saat login pertama.
  *
- * Akun ini — dan hanya akun ini — memegang seluruh peran, supaya bisa membuka
- * setiap menu saat menyiapkan dan menelusuri masalah sistem. Peran dipasang
- * ulang setiap auth-service start, jadi akun admin tidak bisa tertinggal
- * dengan hak yang berkurang.
+ * Skema v2: aturan 1 akun = 1 role (users.role_id). Akun awal hanya memegang
+ * role tata-usaha, tidak lagi seluruh peran. Untuk menguji menu role lain,
+ * buat akun baru lewat menu Data Guru (atau pakai akun demo seed_002).
+ *
+ * dibuat_oleh NULL hanya diterima trigger trg_users_dibuat_tu saat tabel users
+ * masih kosong, yaitu persis akun ini. Seed hanya berjalan pada kondisi itu.
  */
+const ROLE_AWAL = "tata-usaha";
+
 const namaAdmin = () => (process.env.ADMIN_AWAL_USERNAME || "admin").trim();
-
-const pasangSemuaPeran = async (klien, userId) => {
-  const { rowCount } = await klien.query(
-    `INSERT INTO user_roles (user_id, role_id)
-     SELECT $1, id FROM roles
-     ON CONFLICT (user_id, role_id) DO NOTHING`,
-    [userId],
-  );
-
-  return rowCount;
-};
 
 const buatAkunAdmin = async () => {
   const username = namaAdmin();
@@ -45,25 +38,46 @@ const buatAkunAdmin = async () => {
   try {
     await klien.query("BEGIN");
 
-    const { rows } = await klien.query(
-      `INSERT INTO users (username, nama_lengkap, password_hash, harus_ganti_password, password_updated_at)
-       VALUES ($1, $2, $3, TRUE, NOW())
-       RETURNING id`,
-      [username, nama, await sandi.hash(password)],
+    const { rows: role } = await klien.query(
+      "SELECT id FROM roles WHERE nama = $1",
+      [ROLE_AWAL],
     );
 
-    await pasangSemuaPeran(klien, rows[0].id);
+    if (role.length === 0) {
+      throw new Error(
+        `Role "${ROLE_AWAL}" belum ada di tabel roles. ` +
+          "Jalankan database/v2/seed/seed_001_data_awal.sql lebih dulu.",
+      );
+    }
+
+    const { rows } = await klien.query(
+      `INSERT INTO users
+         (username, nama_lengkap, password_hash, role_id, dibuat_oleh,
+          harus_ganti_password, password_updated_at)
+       VALUES ($1, $2, $3, $4, NULL, TRUE, NOW())
+       RETURNING id`,
+      [username, nama, await sandi.hash(password), role[0].id],
+    );
 
     await klien.query(
-      `INSERT INTO audit_log (aksi, target_user_id, detail)
-       VALUES ('buat_akun_awal', $1, $2)`,
-      [rows[0].id, JSON.stringify({ username, peran: "semua" })],
+      `INSERT INTO audit_log
+         (actor_user_id, actor_username, service, aksi, entitas, entitas_id, data_baru)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        rows[0].id,
+        username,
+        "auth-service",
+        "buat_akun_awal",
+        "users",
+        String(rows[0].id),
+        JSON.stringify({ username, role: ROLE_AWAL }),
+      ],
     );
 
     await klien.query("COMMIT");
 
     console.log(
-      `Akun administrator pertama dibuat: ${username} — memegang seluruh peran, ` +
+      `Akun administrator pertama dibuat: ${username} (role ${ROLE_AWAL}), ` +
         "wajib ganti password saat login pertama",
     );
   } catch (err) {
@@ -77,31 +91,9 @@ const buatAkunAdmin = async () => {
 const siapkanAkunAwal = async () => {
   const { rows } = await pool.query("SELECT COUNT(*)::INT AS jumlah FROM users");
 
+  // Database sudah berisi: tidak ada yang diubah. Dengan aturan 1 akun = 1 role,
+  // seed tidak boleh menambah role ke akun yang sudah ada.
   if (rows[0].jumlah === 0) return buatAkunAdmin();
-
-  // Database sudah berisi. Pastikan akun admin tetap memegang semua peran —
-  // ini juga yang menambahkan peran baru ke akun admin lama setelah daftar
-  // peran bertambah.
-  const { rows: admin } = await pool.query(
-    "SELECT id FROM users WHERE LOWER(username) = LOWER($1)",
-    [namaAdmin()],
-  );
-
-  if (admin.length === 0) return;
-
-  const klien = await pool.connect();
-
-  try {
-    const ditambah = await pasangSemuaPeran(klien, admin[0].id);
-
-    if (ditambah > 0) {
-      console.log(
-        `Akun ${namaAdmin()}: ${ditambah} peran dipasangkan supaya lengkap kembali`,
-      );
-    }
-  } finally {
-    klien.release();
-  }
 };
 
 module.exports = { siapkanAkunAwal, namaAdmin };
