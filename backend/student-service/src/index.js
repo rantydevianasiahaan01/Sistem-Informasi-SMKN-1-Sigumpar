@@ -4,6 +4,7 @@ const morgan = require("morgan");
 const path = require("path");
 const mime = require("mime-types");
 const studentRoutes = require("./routes/studentRoutes");
+const nilaiV2Routes = require("./routes/nilaiV2Routes");
 
 const app = express();
 const PORT = process.env.PORT || 3008;
@@ -56,6 +57,9 @@ app.get("/health", (req, res) => {
   });
 });
 
+// API Input Nilai skema v2. Dipasang sebelum studentRoutes; rute lama
+// /api/student/nilai* tidak cocok di sini dan diteruskan ke studentRoutes.
+app.use("/api/student/nilai", nilaiV2Routes);
 app.use("/api/student", studentRoutes);
 
 app.use((req, res) => {
