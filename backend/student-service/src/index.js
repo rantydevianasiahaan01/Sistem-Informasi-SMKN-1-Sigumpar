@@ -4,6 +4,7 @@ const morgan = require("morgan");
 const path = require("path");
 const mime = require("mime-types");
 const studentRoutes = require("./routes/studentRoutes");
+const inputNilaiRoutes = require("./routes/inputNilaiRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 3008;
@@ -56,6 +57,10 @@ app.get("/health", (req, res) => {
   });
 });
 
+// API Input Nilai Sprint 4 (docs/api/openapi.yaml). Dipasang sebelum
+// studentRoutes; rute lama /api/student/nilai* tidak cocok di sini dan
+// diteruskan ke studentRoutes.
+app.use("/api/student/nilai", inputNilaiRoutes);
 app.use("/api/student", studentRoutes);
 
 app.use((req, res) => {
