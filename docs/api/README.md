@@ -8,8 +8,8 @@ sama-sama mengacu ke sini, jadi keduanya bisa dikerjakan paralel.
 | File | Isi | Status |
 |---|---|---|
 | `README.md` | Konvensi umum (file ini) | Ada |
-| `openapi.yaml` | Spesifikasi OpenAPI 3 untuk endpoint Sprint 4 (Input Nilai, BK, PKL) | **Dibuat di task Sprint 4 #1** |
-| `daftar-endpoint.md` | Tabel ringkas: Modul, Method, Endpoint, Deskripsi, Role, Halaman Figma | **Dibuat di task Sprint 4 #1** |
+| `openapi.yaml` | Spesifikasi OpenAPI 3 untuk endpoint Sprint 4 (Input Nilai, BK, PKL) | Ada |
+| `daftar-endpoint.md` | Tabel ringkas: Modul, Method, Endpoint, Deskripsi, Role, Halaman Figma | Ada |
 
 ## Konvensi
 

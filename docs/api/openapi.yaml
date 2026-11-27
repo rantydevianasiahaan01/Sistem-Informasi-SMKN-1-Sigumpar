@@ -1,0 +1,1689 @@
+openapi: 3.0.3
+info:
+  title: API Sprint 4 SMKN 1 Sigumpar (Input Nilai, BK, PKL)
+  version: 0.1.0
+  description: |
+    Kontrak REST API antara front end dan back end untuk halaman Sprint 4.
+    Konvensi umum ada di `docs/api/README.md`, aturan bisnis di `docs/keputusan.md`.
+
+    **Autentikasi.** Semua endpoint memakai header `Authorization: Bearer <token>`
+    (diurus `axiosInstance` di front end). Service membaca identitas dari token:
+    `sub` = id akun (UUID), `realm_access.roles` = role.
+
+    **Role.** Ditulis per endpoint di `x-roles`. Role lain mendapat 403.
+
+    **Pengampu.** Di skema yang berjalan (K-41), satu baris `mata_pelajaran` berisi
+    mapel + kelas + guru, jadi baris itu berperan sebagai "pengampu". Endpoint
+    Input Nilai memakai `mapel_id` (= `mata_pelajaran.id`) sebagai id pengampu.
+
+    **Tahun ajaran.** Parameter `tahun_ajaran_id` selalu opsional; jika tidak
+    dikirim dipakai tahun ajaran yang aktif.
+
+    **Nilai kosong** dikirim dan diterima sebagai `null`, bukan 0 (K-02).
+
+    Endpoint bertanda **(baru)** belum ada sebelum Sprint 4. Endpoint lama yang
+    sudah dipakai halaman lain tetap berlaku dan tidak diubah.
+servers:
+  - url: http://localhost:8001
+    description: Lokal lewat api-gateway
+security:
+  - bearerAuth: []
+tags:
+  - name: Input Nilai
+    description: Halaman Input Nilai guru mapel (Figma "fitur guru mapel - input nilai & Rekap")
+  - name: BK - Pendukung
+    description: Pencarian dan profil siswa untuk modul BK
+  - name: BK - Pemanggilan Orang Tua
+    description: PB-01 (Figma "fitur BK - pemanggilan orang tua")
+  - name: BK - Pendampingan & Pembinaan
+    description: PB-02 (Figma "fitur BK - Pendampingan & Pembinaan Orang Tua")
+  - name: BK - Pengembalian Siswa
+    description: PB-03 (Figma "fitur BK - Pengembalian mahasiswa")
+  - name: BK - Lampiran
+    description: Bukti kegiatan BK, maks 5 MB (K-12)
+  - name: BK - Surat
+    description: Surat dari template, pratinjau, dan arsip read-only (K-11, PB-08)
+  - name: PKL
+    description: Penempatan dan riwayat perpindahan lokasi PKL (Figma "Menu PKL"). API perpindahan dikerjakan Sprint 5.
+
+paths:
+  # =====================================================================
+  # INPUT NILAI (student-service)
+  # =====================================================================
+  /api/student/nilai/pengampu:
+    get:
+      tags: [Input Nilai]
+      summary: (baru) Daftar mapel + kelas yang diampu guru yang login
+      description: Isi dropdown Mapel dan Kelas di halaman Input Nilai.
+      x-roles: [guru-mapel]
+      parameters:
+        - $ref: '#/components/parameters/TahunAjaranId'
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Pengampu' }
+              example:
+                success: true
+                message: Daftar pengampu
+                data:
+                  - { mapel_id: 12, nama_mapel: Informatika, kelas_id: 3, nama_kelas: X TKJ 1, tahun_ajaran_id: 1, tahun_ajaran: 2026/2027, jumlah_siswa: 32 }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+
+  /api/student/nilai/pengampu/{mapel_id}:
+    parameters:
+      - $ref: '#/components/parameters/MapelId'
+    get:
+      tags: [Input Nilai]
+      summary: (baru) Tabel nilai satu pengampu dan semester
+      description: |
+        Siswa aktif di kelas beserta nilai komponen, nilai tiap penilaian harian
+        (kolom P1, P2, ...), rata-rata Harian, nilai perilaku, dan nilai akhir.
+        Nilai akhir dihitung dengan rumus K-02: komponen `null` tidak dihitung dan
+        bobotnya tidak ikut pembagi. Perilaku baru dihitung bila konversi A-E
+        lengkap (K-04). Jika bobot belum diatur, dipakai bobot default K-03 dan
+        `bobot_default = true`.
+      x-roles: [guru-mapel]
+      parameters:
+        - $ref: '#/components/parameters/SemesterWajib'
+        - $ref: '#/components/parameters/TahunAjaranId'
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/TabelNilai' }
+              example:
+                success: true
+                message: Tabel nilai
+                data:
+                  pengampu: { mapel_id: 12, nama_mapel: Informatika, kelas_id: 3, nama_kelas: X TKJ 1, tahun_ajaran_id: 1, tahun_ajaran: 2026/2027, jumlah_siswa: 32 }
+                  semester: ganjil
+                  bobot: { bobot_harian: 10, bobot_tugas: 10, bobot_kuis: 10, bobot_uts: 20, bobot_uas: 25, bobot_praktik: 15, bobot_perilaku: 10 }
+                  bobot_default: true
+                  konversi_perilaku: [{ predikat: A, nilai_angka: 95 }, { predikat: B, nilai_angka: 85 }, { predikat: C, nilai_angka: 75 }, { predikat: D, nilai_angka: 65 }, { predikat: E, nilai_angka: 55 }]
+                  konversi_perilaku_lengkap: true
+                  penilaian_harian: [{ id: 7, urutan: 1, kode: P1, judul: UH Bab 1, jenis: ulangan_harian, tanggal: '2026-11-20', keterangan: null }]
+                  siswa:
+                    - siswa_id: 101
+                      nisn: '0081234567'
+                      nama_lengkap: Andreas Sinaga
+                      nilai_id: 55
+                      tugas: 80
+                      kuis: 85
+                      uts: 78
+                      uas: 82
+                      praktik: 88
+                      predikat_perilaku: B
+                      nilai_harian: [{ penilaian_harian_id: 7, nilai: 70 }]
+                      rata_harian: 70
+                      nilai_perilaku: 85
+                      nilai_akhir: 81.3
+                    - siswa_id: 102
+                      nisn: '0081234568'
+                      nama_lengkap: Debora Panjaitan
+                      nilai_id: null
+                      tugas: null
+                      kuis: null
+                      uts: null
+                      uas: null
+                      praktik: null
+                      predikat_perilaku: null
+                      nilai_harian: [{ penilaian_harian_id: 7, nilai: null }]
+                      rata_harian: null
+                      nilai_perilaku: null
+                      nilai_akhir: null
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/PengampuTidakAda' }
+    put:
+      tags: [Input Nilai]
+      summary: (baru) Simpan nilai komponen banyak siswa sekaligus
+      description: |
+        - Hanya kolom yang dikirim yang diubah (boleh mengirim satu kolom saja, mis. `uts`).
+        - `null` = belum dinilai, bukan 0 (K-02). Nilai angka 0-100.
+        - Siswa harus terdaftar aktif di kelas pengampu.
+        - Satu transaksi: jika satu baris tidak valid, tidak ada yang tersimpan.
+        - Setiap perubahan dicatat ke `riwayat_nilai` (dipakai halaman Riwayat, K-05).
+      x-roles: [guru-mapel]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SimpanNilaiRequest' }
+            example:
+              semester: ganjil
+              nilai:
+                - { siswa_id: 101, tugas: 80, kuis: 85, uts: 78, uas: null, praktik: 88, predikat_perilaku: B }
+                - { siswa_id: 102, uts: 55 }
+      responses:
+        '200':
+          description: Tersimpan. `data` berisi baris nilai terbaru siswa yang dikirim.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/BarisNilai' }
+              example:
+                success: true
+                message: Nilai 2 siswa disimpan (8 perubahan tercatat)
+                data:
+                  - { siswa_id: 101, nilai_id: 55, tugas: 80, kuis: 85, uts: 78, uas: null, praktik: 88, predikat_perilaku: B, rata_harian: null, nilai_perilaku: 85, nilai_akhir: 82.77 }
+        '400':
+          description: Input tidak valid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gagal' }
+              examples:
+                rentang: { value: { success: false, message: 'Baris 1: uts harus angka 0 sampai 100' } }
+                bukan_anggota: { value: { success: false, message: Siswa 999 tidak terdaftar aktif di kelas ini } }
+                predikat: { value: { success: false, message: 'Baris 1: predikat_perilaku harus salah satu dari A, B, C, D, E' } }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/PengampuTidakAda' }
+
+  /api/student/nilai/pengampu/{mapel_id}/bobot:
+    parameters:
+      - $ref: '#/components/parameters/MapelId'
+    put:
+      tags: [Input Nilai]
+      summary: (baru) Simpan bobot komponen (panel Atur Bobot)
+      description: Ketujuh bobot wajib dikirim, masing-masing 0-100, total tepat 100 (K-03). Bobot berlaku per pengampu dan semester.
+      x-roles: [guru-mapel]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BobotRequest' }
+            example: { semester: ganjil, bobot_harian: 10, bobot_tugas: 10, bobot_kuis: 10, bobot_uts: 20, bobot_uas: 25, bobot_praktik: 15, bobot_perilaku: 10 }
+      responses:
+        '200':
+          description: Tersimpan
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Bobot' }
+        '400':
+          description: Input tidak valid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gagal' }
+              example: { success: false, message: 'Total bobot harus 100, sekarang 95' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/PengampuTidakAda' }
+
+  /api/student/nilai/pengampu/{mapel_id}/konversi-perilaku:
+    parameters:
+      - $ref: '#/components/parameters/MapelId'
+    put:
+      tags: [Input Nilai]
+      summary: (baru) Simpan konversi nilai perilaku A-E (modal Konversi Nilai Perilaku)
+      description: |
+        Diisi guru, tanpa persetujuan Waka/Kepsek (K-04). Kelima predikat wajib
+        dikirim sekaligus dan urutannya tidak boleh terbalik (A >= B >= C >= D >= E).
+        Berlaku untuk pengampu pada tahun ajaran itu (kedua semester).
+      x-roles: [guru-mapel]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/KonversiRequest' }
+            example: { A: 95, B: 85, C: 75, D: 65, E: 55 }
+      responses:
+        '200':
+          description: Tersimpan
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Konversi' }
+        '400':
+          description: Input tidak valid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gagal' }
+              examples:
+                kurang: { value: { success: false, message: Nilai predikat E wajib diisi } }
+                terbalik: { value: { success: false, message: Nilai predikat B tidak boleh lebih tinggi dari A } }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/PengampuTidakAda' }
+
+  /api/student/nilai/pengampu/{mapel_id}/harian:
+    parameters:
+      - $ref: '#/components/parameters/MapelId'
+    get:
+      tags: [Input Nilai]
+      summary: (baru) Daftar penilaian harian (P1, P2, ...)
+      x-roles: [guru-mapel]
+      parameters:
+        - $ref: '#/components/parameters/SemesterWajib'
+        - $ref: '#/components/parameters/TahunAjaranId'
+      responses:
+        '200':
+          description: Berhasil (array kosong = state kosong "belum ada penilaian harian")
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          allOf:
+                            - $ref: '#/components/schemas/PenilaianHarian'
+                            - type: object
+                              properties:
+                                jumlah_dinilai: { type: integer, example: 30 }
+                                rata_kelas: { type: number, nullable: true, example: 78.4 }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/PengampuTidakAda' }
+    post:
+      tags: [Input Nilai]
+      summary: (baru) Tambah kolom penilaian harian (tombol "+ Tambah")
+      description: Sistem tambah (K-01). Nomor urut (P1, P2, ...) diberikan otomatis = nomor terbesar + 1.
+      x-roles: [guru-mapel]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PenilaianHarianRequest' }
+            example: { semester: ganjil, judul: UH Bab 1, jenis: ulangan_harian, tanggal: '2026-11-20', keterangan: null }
+      responses:
+        '201':
+          description: Dibuat
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PenilaianHarian' }
+              example:
+                success: true
+                message: Penilaian P1 dibuat
+                data: { id: 7, urutan: 1, kode: P1, judul: UH Bab 1, jenis: ulangan_harian, tanggal: '2026-11-20', keterangan: null }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/PengampuTidakAda' }
+
+  /api/student/nilai/harian/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Input Nilai]
+      summary: (baru) Satu penilaian harian beserta nilai semua siswa
+      x-roles: [guru-mapel]
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: '#/components/schemas/PenilaianHarian'
+                          - type: object
+                            properties:
+                              siswa:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    siswa_id: { type: integer }
+                                    nisn: { type: string }
+                                    nama_lengkap: { type: string }
+                                    nilai: { type: number, nullable: true }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+    put:
+      tags: [Input Nilai]
+      summary: (baru) Isi nilai dan/atau ubah judul, jenis, tanggal penilaian harian
+      description: |
+        Semua bagian opsional, minimal satu. `nilai: null` = siswa tidak ikut,
+        tidak dihitung di rata-rata Harian. Siswa yang tidak dikirim tidak diubah.
+      x-roles: [guru-mapel]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                judul: { type: string, maxLength: 150 }
+                jenis: { $ref: '#/components/schemas/JenisHarian' }
+                tanggal: { type: string, format: date }
+                keterangan: { type: string, nullable: true }
+                nilai:
+                  type: array
+                  maxItems: 200
+                  items:
+                    type: object
+                    required: [siswa_id, nilai]
+                    properties:
+                      siswa_id: { type: integer }
+                      nilai: { type: number, minimum: 0, maximum: 100, nullable: true }
+            example:
+              nilai:
+                - { siswa_id: 101, nilai: 70 }
+                - { siswa_id: 102, nilai: null }
+      responses:
+        '200':
+          description: Tersimpan
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PenilaianHarian' }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+    delete:
+      tags: [Input Nilai]
+      summary: (baru) Hapus kolom penilaian harian beserta nilainya
+      description: Nomor kolom lain tidak digeser (P1, P3 tetap P1, P3).
+      x-roles: [guru-mapel]
+      responses:
+        '200':
+          description: Dihapus
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Sukses' }
+              example: { success: true, message: Penilaian P2 (Kuis 1) dihapus, data: null }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+
+  # =====================================================================
+  # BK (student-service). Tidak ada DELETE untuk data BK (K-12).
+  # Wali kelas hanya melihat siswa kelas perwaliannya pada tahun ajaran aktif;
+  # data siswa di luar itu dijawab 404.
+  # =====================================================================
+  /api/student/bk/siswa:
+    get:
+      tags: [BK - Pendukung]
+      summary: (baru) Cari siswa aktif untuk form BK
+      x-roles: [bk, wali-kelas, kepala-sekolah, waka-sekolah]
+      parameters:
+        - { name: cari, in: query, required: false, schema: { type: string, maxLength: 100 }, description: Potongan nama atau NISN }
+        - $ref: '#/components/parameters/Batas'
+        - $ref: '#/components/parameters/Halaman'
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/SiswaRingkas' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+
+  /api/student/bk/siswa/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [BK - Pendukung]
+      summary: (baru) Profil siswa, data orang tua, dan seluruh catatan BK-nya
+      x-roles: [bk, wali-kelas, kepala-sekolah, waka-sekolah]
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: '#/components/schemas/SiswaRingkas'
+                          - type: object
+                            properties:
+                              orang_tua: { type: array, items: { $ref: '#/components/schemas/OrangTua' } }
+                              pemanggilan: { type: array, items: { $ref: '#/components/schemas/Pemanggilan' } }
+                              pendampingan: { type: array, items: { $ref: '#/components/schemas/Pendampingan' } }
+                              pengembalian: { type: array, items: { $ref: '#/components/schemas/Pengembalian' } }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+
+  # ─── Pemanggilan orang tua (PB-01) ──────────────────────────────────
+  /api/student/bk/pemanggilan:
+    get:
+      tags: [BK - Pemanggilan Orang Tua]
+      summary: (baru) Riwayat pemanggilan orang tua
+      x-roles: [bk, wali-kelas, kepala-sekolah, waka-sekolah]
+      parameters:
+        - { name: status, in: query, required: false, schema: { $ref: '#/components/schemas/StatusPemanggilan' } }
+        - { name: kategori, in: query, required: false, schema: { $ref: '#/components/schemas/KategoriBk' } }
+        - $ref: '#/components/parameters/SiswaIdFilter'
+        - { name: dari, in: query, required: false, schema: { type: string, format: date } }
+        - { name: sampai, in: query, required: false, schema: { type: string, format: date } }
+        - $ref: '#/components/parameters/Batas'
+        - $ref: '#/components/parameters/Halaman'
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuksesBerhalaman'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Pemanggilan' } }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+    post:
+      tags: [BK - Pemanggilan Orang Tua]
+      summary: (baru) Buat pemanggilan orang tua
+      description: Status awal selalu `dijadwalkan`. Wali kelas hanya untuk siswa kelasnya. Dicatat ke audit log.
+      x-roles: [bk, wali-kelas]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PemanggilanRequest' }
+            example: { siswa_id: 101, orang_tua_id: 9, nomor_surat: null, tanggal_surat: '2026-11-27', tanggal_panggilan: '2026-12-01', jam: '09:00', tempat: Ruang BK, kategori: kehadiran, alasan: Terlambat 5 kali dalam sebulan }
+      responses:
+        '201':
+          description: Dibuat
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Pemanggilan' }
+        '400':
+          description: Input tidak valid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gagal' }
+              examples:
+                kategori: { value: { success: false, message: 'kategori harus salah satu dari akademik, kedisiplinan, kehadiran, perilaku, lainnya' } }
+                orang_tua: { value: { success: false, message: Orang tua tersebut bukan orang tua siswa ini } }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+        '409': { $ref: '#/components/responses/NomorSuratDipakai' }
+
+  /api/student/bk/pemanggilan/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [BK - Pemanggilan Orang Tua]
+      summary: (baru) Detail pemanggilan
+      x-roles: [bk, wali-kelas, kepala-sekolah, waka-sekolah]
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Pemanggilan' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+    put:
+      tags: [BK - Pemanggilan Orang Tua]
+      summary: (baru) Ubah pemanggilan / ubah status / isi hasil pertemuan
+      description: |
+        Kirim hanya kolom yang diubah. Alur status:
+        `dijadwalkan` -> `hadir` | `tidak_hadir` | `dijadwal_ulang`;
+        `dijadwal_ulang` -> `hadir` | `tidak_hadir` | `dijadwal_ulang`;
+        `tidak_hadir` -> `dijadwal_ulang` | `selesai`; `hadir` -> `selesai`.
+        `dijadwal_ulang` wajib disertai `tanggal_panggilan` baru. `selesai` wajib punya
+        `hasil_pertemuan`; setelah selesai catatan terkunci (409).
+        Wali kelas hanya boleh mengubah pemanggilan yang dibuatnya sendiri.
+      x-roles: [bk, wali-kelas]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PemanggilanUbahRequest' }
+            example: { status: selesai, hasil_pertemuan: 'Orang tua hadir, siswa berjanji tidak terlambat lagi', kesepakatan: Dipantau 2 minggu }
+      responses:
+        '200':
+          description: Tersimpan
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Pemanggilan' }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+        '409':
+          description: Status tidak boleh berpindah begitu, catatan sudah selesai, atau nomor surat sudah dipakai
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gagal' }
+              examples:
+                alur: { value: { success: false, message: Status tidak bisa berubah dari dijadwalkan ke selesai } }
+                terkunci: { value: { success: false, message: Pemanggilan yang sudah selesai tidak dapat diubah } }
+
+  # ─── Pendampingan & pembinaan (PB-02) ───────────────────────────────
+  /api/student/bk/pendampingan:
+    get:
+      tags: [BK - Pendampingan & Pembinaan]
+      summary: (baru) Riwayat pendampingan dan pembinaan
+      x-roles: [bk, wali-kelas, kepala-sekolah, waka-sekolah]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [masih_berjalan, selesai] } }
+        - { name: jenis, in: query, required: false, schema: { $ref: '#/components/schemas/JenisPendampingan' } }
+        - $ref: '#/components/parameters/SiswaIdFilter'
+        - { name: dari, in: query, required: false, schema: { type: string, format: date } }
+        - { name: sampai, in: query, required: false, schema: { type: string, format: date } }
+        - $ref: '#/components/parameters/Batas'
+        - $ref: '#/components/parameters/Halaman'
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuksesBerhalaman'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Pendampingan' } }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+    post:
+      tags: [BK - Pendampingan & Pembinaan]
+      summary: (baru) Catat pendampingan / pembinaan
+      description: Hanya guru BK. `sesi_ke` yang tidak diisi dihitung otomatis per siswa dan jenis. Status awal `masih_berjalan`.
+      x-roles: [bk]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PendampinganRequest' }
+            example: { siswa_id: 101, orang_tua_id: 9, jenis: pembinaan, tanggal: '2026-12-02', topik: Kedisiplinan datang tepat waktu, permasalahan: Terlambat 5 kali }
+      responses:
+        '201':
+          description: Dibuat
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Pendampingan' }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+
+  /api/student/bk/pendampingan/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [BK - Pendampingan & Pembinaan]
+      summary: (baru) Detail pendampingan
+      x-roles: [bk, wali-kelas, kepala-sekolah, waka-sekolah]
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Pendampingan' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+    put:
+      tags: [BK - Pendampingan & Pembinaan]
+      summary: (baru) Ubah pendampingan / tandai selesai
+      description: Kirim hanya kolom yang diubah. `selesai` wajib punya `hasil`; setelah selesai terkunci (409).
+      x-roles: [bk]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PendampinganUbahRequest' }
+            example: { status: selesai, hasil: Siswa memahami dampak keterlambatan }
+      responses:
+        '200':
+          description: Tersimpan
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Pendampingan' }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+        '409': { $ref: '#/components/responses/Terkunci' }
+
+  # ─── Pengembalian siswa kepada orang tua (PB-03) ────────────────────
+  /api/student/bk/pengembalian:
+    get:
+      tags: [BK - Pengembalian Siswa]
+      summary: (baru) Daftar pengajuan pengembalian (yang masih `diajukan` di atas)
+      x-roles: [bk, wali-kelas, kepala-sekolah, waka-sekolah]
+      parameters:
+        - { name: status, in: query, required: false, schema: { $ref: '#/components/schemas/StatusPengembalian' } }
+        - { name: jenis, in: query, required: false, schema: { type: string, enum: [sementara, permanen] } }
+        - $ref: '#/components/parameters/SiswaIdFilter'
+        - $ref: '#/components/parameters/Batas'
+        - $ref: '#/components/parameters/Halaman'
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuksesBerhalaman'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Pengembalian' } }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+    post:
+      tags: [BK - Pengembalian Siswa]
+      summary: (baru) Ajukan pengembalian siswa
+      description: |
+        Hanya guru BK. `sementara` wajib `tanggal_mulai` dan `tanggal_sampai`;
+        `permanen` tidak memakai `tanggal_sampai`. Siswa yang masih punya pengajuan
+        `diajukan`/`disetujui` tidak bisa diajukan lagi (409).
+        `tanggal_pengajuan` default hari ini.
+      x-roles: [bk]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PengembalianRequest' }
+            example: { siswa_id: 101, orang_tua_id: 9, jenis: sementara, tanggal_mulai: '2026-12-07', tanggal_sampai: '2026-12-11', alasan: Pelanggaran tata tertib berat, dasar_pertimbangan: Hasil rapat dewan guru }
+      responses:
+        '201':
+          description: Diajukan, menunggu keputusan kepala sekolah
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Pengembalian' }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+        '409':
+          description: Masih ada pengajuan aktif, atau nomor surat dipakai
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gagal' }
+              example: { success: false, message: Siswa ini masih punya pengembalian berstatus diajukan (id 4) }
+
+  /api/student/bk/pengembalian/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [BK - Pengembalian Siswa]
+      summary: (baru) Detail pengembalian
+      x-roles: [bk, wali-kelas, kepala-sekolah, waka-sekolah]
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Pengembalian' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+    put:
+      tags: [BK - Pengembalian Siswa]
+      summary: (baru) Ubah isi pengajuan (hanya selama `diajukan`)
+      x-roles: [bk]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PengembalianUbahRequest' }
+      responses:
+        '200':
+          description: Tersimpan
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Pengembalian' }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+        '409': { $ref: '#/components/responses/Terkunci' }
+
+  /api/student/bk/pengembalian/{id}/keputusan:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [BK - Pengembalian Siswa]
+      summary: (baru) Kepala sekolah menyetujui atau menolak
+      description: |
+        Hanya `kepala-sekolah` (Waka tidak). Penolakan wajib `catatan_keputusan`.
+        Pengembalian **permanen** yang disetujui mengubah status siswa di rombel
+        tahun ajaran aktif menjadi `dikembalikan`; yang sementara tidak.
+      x-roles: [kepala-sekolah]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keputusan]
+              properties:
+                keputusan: { type: string, enum: [disetujui, ditolak] }
+                catatan_keputusan: { type: string, nullable: true, description: Wajib jika ditolak }
+            example: { keputusan: disetujui, catatan_keputusan: Disetujui 5 hari }
+      responses:
+        '200':
+          description: Tersimpan
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Pengembalian' }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+        '409':
+          description: Sudah diputuskan
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gagal' }
+              example: { success: false, message: Pengajuan ini sudah disetujui }
+
+  /api/student/bk/pengembalian/{id}/selesai:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [BK - Pengembalian Siswa]
+      summary: (baru) Tandai pengembalian yang disetujui sebagai selesai
+      x-roles: [bk]
+      responses:
+        '200':
+          description: Tersimpan
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Pengembalian' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+        '409':
+          description: Belum disetujui
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gagal' }
+              example: { success: false, message: Hanya pengembalian yang disetujui yang bisa diselesaikan (sekarang diajukan) }
+
+  # ─── Lampiran BK ────────────────────────────────────────────────────
+  /api/student/bk/lampiran:
+    get:
+      tags: [BK - Lampiran]
+      summary: (baru) Daftar lampiran satu catatan BK
+      description: Isi tepat satu dari `pemanggilan_id`, `pendampingan_id`, `pengembalian_id`.
+      x-roles: [bk, wali-kelas, kepala-sekolah, waka-sekolah]
+      parameters:
+        - { name: pemanggilan_id, in: query, required: false, schema: { type: integer } }
+        - { name: pendampingan_id, in: query, required: false, schema: { type: integer } }
+        - { name: pengembalian_id, in: query, required: false, schema: { type: integer } }
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Lampiran' } }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+    post:
+      tags: [BK - Lampiran]
+      summary: (baru) Unggah lampiran (PDF/JPG/PNG, maks 5 MB)
+      description: |
+        Jenis file dicek dari isinya; nama file di server `bk-<uuid>.<ext>`
+        (lihat `docs/penyimpanan-file.md`). Lampiran tidak bisa dihapus (K-12).
+      x-roles: [bk]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: 'PDF, JPG, atau PNG; maks 5 MB' }
+                pemanggilan_id: { type: integer }
+                pendampingan_id: { type: integer }
+                pengembalian_id: { type: integer }
+      responses:
+        '201':
+          description: Diunggah
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Lampiran' }
+        '400':
+          description: File tidak valid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gagal' }
+              examples:
+                ukuran: { value: { success: false, message: Ukuran file maksimal 5 MB } }
+                jenis: { value: { success: false, message: 'File harus PDF, JPG, atau PNG' } }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+
+  /api/student/bk/lampiran/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [BK - Lampiran]
+      summary: (baru) Unduh file lampiran
+      description: File hanya bisa diambil lewat endpoint ini (dengan token), tidak lewat alamat statis `/uploads`.
+      x-roles: [bk, wali-kelas, kepala-sekolah, waka-sekolah]
+      responses:
+        '200':
+          description: Isi file
+          content:
+            application/pdf: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+
+  # ─── Surat BK dari template + arsip read-only (K-11, PB-08) ─────────
+  /api/student/bk/surat/pratinjau:
+    get:
+      tags: [BK - Surat]
+      summary: (baru) Data pengisi template surat (pratinjau, tidak menyimpan apa pun)
+      description: |
+        Isi tepat satu dari `pemanggilan_id`, `pendampingan_id`, `pengembalian_id`.
+        Front end menyusun tampilan surat dari template dengan data ini.
+        **MENUNGGU KONFIRMASI (T-01):** format nomor surat belum ditetapkan sekolah;
+        `nomor_surat_usulan` selalu `null` sampai formatnya disepakati.
+      x-roles: [bk, wali-kelas]
+      parameters:
+        - { name: pemanggilan_id, in: query, required: false, schema: { type: integer } }
+        - { name: pendampingan_id, in: query, required: false, schema: { type: integer } }
+        - { name: pengembalian_id, in: query, required: false, schema: { type: integer } }
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/DataSurat' }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+
+  /api/student/bk/surat:
+    get:
+      tags: [BK - Surat]
+      summary: (baru) Daftar arsip surat BK
+      x-roles: [bk, wali-kelas, kepala-sekolah, waka-sekolah]
+      parameters:
+        - $ref: '#/components/parameters/SiswaIdFilter'
+        - { name: jenis_surat, in: query, required: false, schema: { $ref: '#/components/schemas/JenisSurat' } }
+        - $ref: '#/components/parameters/Batas'
+        - $ref: '#/components/parameters/Halaman'
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuksesBerhalaman'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/ArsipSurat' } }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+    post:
+      tags: [BK - Surat]
+      summary: (baru) Terbitkan surat dan simpan ke arsip (read-only)
+      description: |
+        Menyimpan salinan data surat saat diterbitkan (`data_surat`), sehingga isi
+        arsip tidak berubah walaupun data sumbernya diubah kemudian. Arsip tidak
+        bisa diubah atau dihapus (K-11). Wali kelas hanya untuk siswa kelasnya.
+        **MENUNGGU KONFIRMASI (T-01):** `nomor_surat` sementara diisi manual
+        (boleh kosong, tidak boleh kembar).
+      x-roles: [bk, wali-kelas]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tanggal_surat]
+              properties:
+                pemanggilan_id: { type: integer }
+                pendampingan_id: { type: integer }
+                pengembalian_id: { type: integer }
+                tanggal_surat: { type: string, format: date }
+                nomor_surat: { type: string, maxLength: 100, nullable: true }
+            example: { pemanggilan_id: 15, tanggal_surat: '2026-11-27', nomor_surat: null }
+      responses:
+        '201':
+          description: Diterbitkan dan diarsipkan
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ArsipSurat' }
+        '400': { $ref: '#/components/responses/InputTidakValid' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+        '409': { $ref: '#/components/responses/NomorSuratDipakai' }
+
+  /api/student/bk/surat/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [BK - Surat]
+      summary: (baru) Detail arsip surat (untuk cetak ulang)
+      x-roles: [bk, wali-kelas, kepala-sekolah, waka-sekolah]
+      responses:
+        '200':
+          description: Berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ArsipSurat' }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+
+  # =====================================================================
+  # PKL (vocational-service). API perpindahan dikerjakan Sprint 5 (K-42).
+  # =====================================================================
+  /api/vocational/pkl/lokasi:
+    get:
+      tags: [PKL]
+      summary: Daftar penempatan / lokasi PKL siswa (endpoint lama, tetap)
+      description: Endpoint existing (`pklController.getAllLokasiPKL`), tidak diubah. Satu baris = satu penempatan siswa di tempat PKL.
+      x-roles: [vokasi, kepala-sekolah, waka-sekolah]
+      responses:
+        '200':
+          description: Berhasil (bentuk respons mengikuti endpoint lama)
+        '401': { $ref: '#/components/responses/BelumLogin' }
+
+  /api/vocational/pkl/perpindahan:
+    get:
+      tags: [PKL]
+      summary: (baru, Sprint 5) Riwayat perpindahan lokasi PKL
+      x-roles: [vokasi, kepala-sekolah, waka-sekolah]
+      parameters:
+        - $ref: '#/components/parameters/SiswaIdFilter'
+      responses:
+        '200':
+          description: Berhasil, urut per siswa lalu `urutan`
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Perpindahan' } }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+    post:
+      tags: [PKL]
+      summary: (baru, Sprint 5) Catat perpindahan lokasi PKL
+      description: |
+        Data perpindahan permanen: tidak ada ubah/hapus (K-21). `urutan` diberikan
+        otomatis per siswa. Lokasi tujuan dibuat lebih dulu lewat
+        `POST /api/vocational/pkl/lokasi` (endpoint lama). Lokasi asal dan tujuan
+        harus milik siswa yang sama dan tidak boleh sama.
+      x-roles: [vokasi]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siswa_id, lokasi_asal_id, lokasi_tujuan_id, tanggal_pindah, alasan, disetujui_oleh]
+              properties:
+                siswa_id: { type: integer }
+                lokasi_asal_id: { type: integer, description: id laporan_lokasi_pkl asal }
+                lokasi_tujuan_id: { type: integer, description: id laporan_lokasi_pkl tujuan }
+                tanggal_pindah: { type: string, format: date }
+                alasan: { type: string }
+                disetujui_oleh: { $ref: '#/components/schemas/PenyetujuPindah' }
+                dokumen_pendukung: { type: string, nullable: true, description: Path file pendukung (opsional) }
+            example: { siswa_id: 101, lokasi_asal_id: 31, lokasi_tujuan_id: 44, tanggal_pindah: '2026-11-27', alasan: Divisi tempat PKL ditutup, disetujui_oleh: koordinator_pkl }
+      responses:
+        '201':
+          description: Dicatat
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sukses'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Perpindahan' }
+        '400':
+          description: Input tidak valid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gagal' }
+              example: { success: false, message: Lokasi asal dan tujuan tidak boleh sama }
+        '401': { $ref: '#/components/responses/BelumLogin' }
+        '403': { $ref: '#/components/responses/TidakBerhak' }
+        '404': { $ref: '#/components/responses/TidakDitemukan' }
+
+# =======================================================================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    MapelId:
+      name: mapel_id
+      in: path
+      required: true
+      description: id `mata_pelajaran` (= pengampu di skema yang berjalan)
+      schema: { type: integer, minimum: 1 }
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    SemesterWajib:
+      name: semester
+      in: query
+      required: true
+      schema: { $ref: '#/components/schemas/Semester' }
+    TahunAjaranId:
+      name: tahun_ajaran_id
+      in: query
+      required: false
+      description: Default tahun ajaran aktif
+      schema: { type: integer, minimum: 1 }
+    SiswaIdFilter:
+      name: siswa_id
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1 }
+    Batas:
+      name: batas
+      in: query
+      required: false
+      description: Jumlah data per halaman (1-200)
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Halaman:
+      name: halaman
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, default: 1 }
+
+  responses:
+    InputTidakValid:
+      description: Input tidak valid (pesan menyebut field yang salah)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Gagal' }
+          example: { success: false, message: semester harus 'ganjil' atau 'genap' }
+    BelumLogin:
+      description: Belum login / token tidak valid
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Gagal' }
+          example: { success: false, message: 'Unauthorized: Token missing' }
+    TidakBerhak:
+      description: Role tidak berhak
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Gagal' }
+          example: { success: false, message: Role ini tidak memiliki akses ke modul BK }
+    TidakDitemukan:
+      description: Data tidak ada, atau ada tetapi di luar hak akses pengguna
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Gagal' }
+          example: { success: false, message: Pemanggilan tidak ditemukan }
+    PengampuTidakAda:
+      description: Mapel tidak ada atau bukan milik guru yang login
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Gagal' }
+          example: { success: false, message: Pengampu tidak ditemukan }
+    Terkunci:
+      description: Data sudah selesai/diputuskan sehingga tidak bisa diubah
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Gagal' }
+          example: { success: false, message: Pendampingan yang sudah selesai tidak dapat diubah }
+    NomorSuratDipakai:
+      description: Nomor surat sudah dipakai
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Gagal' }
+          example: { success: false, message: Nomor surat sudah dipakai }
+
+  schemas:
+    # ─── Amplop respons ───
+    Sukses:
+      type: object
+      required: [success, message]
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string }
+        data: { nullable: true }
+    SuksesBerhalaman:
+      allOf:
+        - $ref: '#/components/schemas/Sukses'
+        - type: object
+          properties:
+            paging:
+              type: object
+              properties:
+                halaman: { type: integer, example: 1 }
+                batas: { type: integer, example: 50 }
+                total: { type: integer, example: 3 }
+    Gagal:
+      type: object
+      required: [success, message]
+      properties:
+        success: { type: boolean, example: false }
+        message: { type: string, description: 'Pesan dalam Bahasa Indonesia, tanpa detail SQL' }
+
+    # ─── Umum ───
+    Semester: { type: string, enum: [ganjil, genap] }
+    NilaiAngka:
+      type: number
+      minimum: 0
+      maximum: 100
+      nullable: true
+      description: '`null` = belum dinilai, tampil "–", tidak dihitung (K-02)'
+    Predikat:
+      type: string
+      enum: [A, B, C, D, E]
+      description: A Sangat baik, B Baik, C Cukup, D Kurang, E Sangat kurang (K-04)
+
+    # ─── Input Nilai ───
+    Pengampu:
+      type: object
+      properties:
+        mapel_id: { type: integer }
+        nama_mapel: { type: string }
+        kelas_id: { type: integer }
+        nama_kelas: { type: string }
+        tahun_ajaran_id: { type: integer }
+        tahun_ajaran: { type: string, example: 2026/2027 }
+        jumlah_siswa: { type: integer }
+    Bobot:
+      type: object
+      description: Total wajib 100 (K-03). Default 10/10/10/20/25/15/10.
+      properties:
+        bobot_harian: { type: number, example: 10 }
+        bobot_tugas: { type: number, example: 10 }
+        bobot_kuis: { type: number, example: 10 }
+        bobot_uts: { type: number, example: 20 }
+        bobot_uas: { type: number, example: 25 }
+        bobot_praktik: { type: number, example: 15 }
+        bobot_perilaku: { type: number, example: 10 }
+    BobotRequest:
+      allOf:
+        - type: object
+          required: [semester, bobot_harian, bobot_tugas, bobot_kuis, bobot_uts, bobot_uas, bobot_praktik, bobot_perilaku]
+          properties:
+            semester: { $ref: '#/components/schemas/Semester' }
+            tahun_ajaran_id: { type: integer, description: Default tahun ajaran aktif }
+        - $ref: '#/components/schemas/Bobot'
+    Konversi:
+      type: object
+      properties:
+        predikat: { $ref: '#/components/schemas/Predikat' }
+        nilai_angka: { type: number, minimum: 0, maximum: 100 }
+    KonversiRequest:
+      type: object
+      required: [A, B, C, D, E]
+      properties:
+        tahun_ajaran_id: { type: integer, description: Default tahun ajaran aktif }
+        A: { type: number, minimum: 0, maximum: 100 }
+        B: { type: number, minimum: 0, maximum: 100 }
+        C: { type: number, minimum: 0, maximum: 100 }
+        D: { type: number, minimum: 0, maximum: 100 }
+        E: { type: number, minimum: 0, maximum: 100 }
+    JenisHarian:
+      type: string
+      enum: [kuis, tugas_harian, ulangan_harian, lisan, lainnya]
+    PenilaianHarian:
+      type: object
+      properties:
+        id: { type: integer }
+        urutan: { type: integer, example: 1 }
+        kode: { type: string, example: P1 }
+        judul: { type: string, example: UH Bab 1 }
+        jenis: { $ref: '#/components/schemas/JenisHarian' }
+        tanggal: { type: string, format: date }
+        keterangan: { type: string, nullable: true }
+    PenilaianHarianRequest:
+      type: object
+      required: [semester, judul, jenis, tanggal]
+      properties:
+        semester: { $ref: '#/components/schemas/Semester' }
+        tahun_ajaran_id: { type: integer, description: Default tahun ajaran aktif }
+        judul: { type: string, maxLength: 150 }
+        jenis: { $ref: '#/components/schemas/JenisHarian' }
+        tanggal: { type: string, format: date }
+        keterangan: { type: string, nullable: true }
+    KomponenNilai:
+      type: object
+      properties:
+        tugas: { $ref: '#/components/schemas/NilaiAngka' }
+        kuis: { $ref: '#/components/schemas/NilaiAngka' }
+        uts: { $ref: '#/components/schemas/NilaiAngka' }
+        uas: { $ref: '#/components/schemas/NilaiAngka' }
+        praktik: { $ref: '#/components/schemas/NilaiAngka' }
+        predikat_perilaku:
+          allOf: [{ $ref: '#/components/schemas/Predikat' }]
+          nullable: true
+    BarisNilai:
+      allOf:
+        - type: object
+          properties:
+            siswa_id: { type: integer }
+            nilai_id: { type: integer, nullable: true, description: '`null` jika siswa belum pernah dinilai' }
+        - $ref: '#/components/schemas/KomponenNilai'
+        - type: object
+          properties:
+            rata_harian: { type: number, nullable: true, description: Rata-rata penilaian harian yang diikuti }
+            nilai_perilaku: { type: number, nullable: true, description: Angka konversi; `null` bila konversi A-E belum lengkap }
+            nilai_akhir: { type: number, nullable: true, description: 'Rumus K-02, 2 angka di belakang koma' }
+    TabelNilai:
+      type: object
+      properties:
+        pengampu: { $ref: '#/components/schemas/Pengampu' }
+        semester: { $ref: '#/components/schemas/Semester' }
+        bobot: { $ref: '#/components/schemas/Bobot' }
+        bobot_default: { type: boolean, description: '`true` jika bobot belum pernah diatur' }
+        konversi_perilaku: { type: array, items: { $ref: '#/components/schemas/Konversi' } }
+        konversi_perilaku_lengkap: { type: boolean }
+        penilaian_harian: { type: array, items: { $ref: '#/components/schemas/PenilaianHarian' } }
+        siswa:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/BarisNilai'
+              - type: object
+                properties:
+                  nisn: { type: string }
+                  nama_lengkap: { type: string }
+                  nilai_harian:
+                    type: array
+                    description: Satu elemen per kolom P1, P2, ...
+                    items:
+                      type: object
+                      properties:
+                        penilaian_harian_id: { type: integer }
+                        nilai: { $ref: '#/components/schemas/NilaiAngka' }
+    SimpanNilaiRequest:
+      type: object
+      required: [semester, nilai]
+      properties:
+        semester: { $ref: '#/components/schemas/Semester' }
+        tahun_ajaran_id: { type: integer, description: Default tahun ajaran aktif }
+        nilai:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            allOf:
+              - type: object
+                required: [siswa_id]
+                properties:
+                  siswa_id: { type: integer }
+              - $ref: '#/components/schemas/KomponenNilai'
+
+    # ─── BK ───
+    SiswaRingkas:
+      type: object
+      properties:
+        siswa_id: { type: integer }
+        nisn: { type: string }
+        nama_lengkap: { type: string }
+        nama_kelas: { type: string, nullable: true }
+    OrangTua:
+      type: object
+      properties:
+        id: { type: integer }
+        nama: { type: string }
+        hubungan: { type: string, enum: [ayah, ibu, wali] }
+        no_hp: { type: string, nullable: true }
+    KategoriBk:
+      type: string
+      enum: [akademik, kedisiplinan, kehadiran, perilaku, lainnya]
+    StatusPemanggilan:
+      type: string
+      enum: [dijadwalkan, hadir, tidak_hadir, dijadwal_ulang, selesai]
+    PemanggilanRequest:
+      type: object
+      required: [siswa_id, tanggal_panggilan, kategori, alasan]
+      properties:
+        siswa_id: { type: integer }
+        orang_tua_id: { type: integer, nullable: true, description: Harus orang tua siswa yang sama }
+        nomor_surat: { type: string, maxLength: 60, nullable: true, description: 'MENUNGGU KONFIRMASI (T-01): diisi manual sementara' }
+        tanggal_surat: { type: string, format: date, nullable: true }
+        tanggal_panggilan: { type: string, format: date }
+        jam: { type: string, example: '09:00', nullable: true, description: Format HH:MM }
+        tempat: { type: string, maxLength: 100, nullable: true }
+        kategori: { $ref: '#/components/schemas/KategoriBk' }
+        alasan: { type: string }
+    PemanggilanUbahRequest:
+      type: object
+      description: Semua opsional; kirim hanya yang diubah
+      properties:
+        orang_tua_id: { type: integer, nullable: true }
+        nomor_surat: { type: string, maxLength: 60, nullable: true }
+        tanggal_surat: { type: string, format: date, nullable: true }
+        tanggal_panggilan: { type: string, format: date }
+        jam: { type: string, nullable: true }
+        tempat: { type: string, nullable: true }
+        kategori: { $ref: '#/components/schemas/KategoriBk' }
+        alasan: { type: string }
+        status: { $ref: '#/components/schemas/StatusPemanggilan' }
+        hasil_pertemuan: { type: string, nullable: true }
+        kesepakatan: { type: string, nullable: true }
+        tindak_lanjut: { type: string, nullable: true }
+    Pemanggilan:
+      allOf:
+        - type: object
+          properties:
+            id: { type: integer }
+            nama_siswa: { type: string }
+            nisn: { type: string }
+            nama_kelas: { type: string, nullable: true }
+            nama_orang_tua: { type: string, nullable: true }
+            status: { $ref: '#/components/schemas/StatusPemanggilan' }
+            hasil_pertemuan: { type: string, nullable: true }
+            kesepakatan: { type: string, nullable: true }
+            tindak_lanjut: { type: string, nullable: true }
+            dibuat_oleh: { type: string, format: uuid }
+            nama_pembuat: { type: string }
+        - $ref: '#/components/schemas/PemanggilanRequest'
+    JenisPendampingan:
+      type: string
+      enum: [pendampingan, pembinaan]
+    PendampinganRequest:
+      type: object
+      required: [siswa_id, jenis, tanggal, topik]
+      properties:
+        siswa_id: { type: integer }
+        orang_tua_id: { type: integer, nullable: true }
+        jenis: { $ref: '#/components/schemas/JenisPendampingan' }
+        tanggal: { type: string, format: date }
+        sesi_ke: { type: integer, minimum: 1, nullable: true, description: Kosong = otomatis }
+        topik: { type: string, maxLength: 200 }
+        permasalahan: { type: string, nullable: true }
+        uraian_kegiatan: { type: string, nullable: true }
+        hasil: { type: string, nullable: true }
+        rencana_tindak_lanjut: { type: string, nullable: true }
+    PendampinganUbahRequest:
+      type: object
+      description: Semua opsional; kirim hanya yang diubah
+      properties:
+        orang_tua_id: { type: integer, nullable: true }
+        jenis: { $ref: '#/components/schemas/JenisPendampingan' }
+        tanggal: { type: string, format: date }
+        sesi_ke: { type: integer, minimum: 1, nullable: true }
+        topik: { type: string, maxLength: 200 }
+        permasalahan: { type: string, nullable: true }
+        uraian_kegiatan: { type: string, nullable: true }
+        hasil: { type: string, nullable: true }
+        rencana_tindak_lanjut: { type: string, nullable: true }
+        status: { type: string, enum: [masih_berjalan, selesai] }
+    Pendampingan:
+      allOf:
+        - type: object
+          properties:
+            id: { type: integer }
+            nama_siswa: { type: string }
+            nisn: { type: string }
+            nama_kelas: { type: string, nullable: true }
+            nama_orang_tua: { type: string, nullable: true }
+            status: { type: string, enum: [masih_berjalan, selesai] }
+            dibuat_oleh: { type: string, format: uuid }
+            nama_pembuat: { type: string }
+        - $ref: '#/components/schemas/PendampinganRequest'
+    StatusPengembalian:
+      type: string
+      enum: [diajukan, disetujui, ditolak, selesai]
+    PengembalianRequest:
+      type: object
+      required: [siswa_id, jenis, alasan]
+      properties:
+        siswa_id: { type: integer }
+        orang_tua_id: { type: integer, nullable: true }
+        nomor_surat: { type: string, maxLength: 60, nullable: true, description: 'MENUNGGU KONFIRMASI (T-01)' }
+        tanggal_pengajuan: { type: string, format: date, description: Default hari ini }
+        jenis: { type: string, enum: [sementara, permanen] }
+        tanggal_mulai: { type: string, format: date, nullable: true }
+        tanggal_sampai: { type: string, format: date, nullable: true, description: Wajib untuk sementara; harus kosong untuk permanen }
+        alasan: { type: string }
+        dasar_pertimbangan: { type: string, nullable: true }
+    PengembalianUbahRequest:
+      type: object
+      description: Semua opsional; kirim hanya yang diubah. Hanya selama status `diajukan`.
+      properties:
+        orang_tua_id: { type: integer, nullable: true }
+        nomor_surat: { type: string, nullable: true }
+        tanggal_pengajuan: { type: string, format: date }
+        jenis: { type: string, enum: [sementara, permanen] }
+        tanggal_mulai: { type: string, format: date, nullable: true }
+        tanggal_sampai: { type: string, format: date, nullable: true }
+        alasan: { type: string }
+        dasar_pertimbangan: { type: string, nullable: true }
+    Pengembalian:
+      allOf:
+        - type: object
+          properties:
+            id: { type: integer }
+            nama_siswa: { type: string }
+            nisn: { type: string }
+            nama_kelas: { type: string, nullable: true }
+            nama_orang_tua: { type: string, nullable: true }
+            status: { $ref: '#/components/schemas/StatusPengembalian' }
+            diajukan_oleh: { type: string, format: uuid }
+            nama_pengaju: { type: string }
+            diputuskan_oleh: { type: string, format: uuid, nullable: true }
+            nama_pemutus: { type: string, nullable: true }
+            tanggal_keputusan: { type: string, nullable: true, example: '2026-11-28 10:15' }
+            catatan_keputusan: { type: string, nullable: true }
+        - $ref: '#/components/schemas/PengembalianRequest'
+    Lampiran:
+      type: object
+      properties:
+        id: { type: integer }
+        pemanggilan_id: { type: integer, nullable: true }
+        pendampingan_id: { type: integer, nullable: true }
+        pengembalian_id: { type: integer, nullable: true }
+        file_mime: { type: string, enum: [application/pdf, image/jpeg, image/png] }
+        nama_file: { type: string, example: bk-3f6c9a2e-1b7d-4c1e-9a55-2f0c6f1d8b40.pdf }
+        nama_pengunggah: { type: string }
+        diunggah_pada: { type: string, example: '2026-11-27 15:04' }
+        url_unduh: { type: string, example: /api/student/bk/lampiran/12 }
+    JenisSurat:
+      type: string
+      enum: [pemanggilan_ortu, pendampingan_ortu, pengembalian_siswa]
+    DataSurat:
+      type: object
+      description: Data yang dipakai mengisi template surat
+      properties:
+        jenis_surat: { $ref: '#/components/schemas/JenisSurat' }
+        nomor_surat_usulan: { type: string, nullable: true, description: 'MENUNGGU KONFIRMASI (T-01): selalu null untuk sementara' }
+        sekolah:
+          type: object
+          properties:
+            nama: { type: string, example: SMK Negeri 1 Sigumpar }
+        siswa: { $ref: '#/components/schemas/SiswaRingkas' }
+        orang_tua:
+          allOf: [{ $ref: '#/components/schemas/OrangTua' }]
+          nullable: true
+        catatan:
+          type: object
+          description: Isi catatan BK sumber (bentuk sama dengan Pemanggilan / Pendampingan / Pengembalian)
+        penandatangan:
+          type: object
+          properties:
+            nama: { type: string }
+            jabatan: { type: string, example: Guru BK }
+    ArsipSurat:
+      type: object
+      properties:
+        id: { type: integer }
+        jenis_surat: { $ref: '#/components/schemas/JenisSurat' }
+        pemanggilan_id: { type: integer, nullable: true }
+        pendampingan_id: { type: integer, nullable: true }
+        pengembalian_id: { type: integer, nullable: true }
+        nomor_surat: { type: string, nullable: true }
+        tanggal_surat: { type: string, format: date }
+        data_surat: { $ref: '#/components/schemas/DataSurat' }
+        diterbitkan_oleh: { type: string, format: uuid }
+        diterbitkan_pada: { type: string, example: '2026-11-27 15:10' }
+
+    # ─── PKL ───
+    PenyetujuPindah:
+      type: string
+      enum: [koordinator_pkl, waka_humas, kepala_sekolah]
+    Perpindahan:
+      type: object
+      properties:
+        id: { type: integer }
+        siswa_id: { type: integer }
+        urutan: { type: integer, example: 1 }
+        lokasi_asal_id: { type: integer }
+        nama_perusahaan_asal: { type: string }
+        lokasi_tujuan_id: { type: integer }
+        nama_perusahaan_tujuan: { type: string }
+        tanggal_pindah: { type: string, format: date }
+        alasan: { type: string }
+        disetujui_oleh: { $ref: '#/components/schemas/PenyetujuPindah' }
+        dokumen_pendukung: { type: string, nullable: true }
+        dicatat_oleh: { type: string, format: uuid, nullable: true }
+        dicatat_pada: { type: string, example: '2026-11-27 15:20' }
